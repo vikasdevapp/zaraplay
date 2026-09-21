@@ -43,16 +43,13 @@ export default async function LandingPage() {
 
       <main className="flex-1 max-w-6xl w-full mx-auto px-4 py-10 flex flex-col items-center text-center gap-6">
         <Logo size="lg" full />
-        <span className="inline-block bg-surface2 border border-border rounded-full px-4 py-1 text-xs text-muted">
-          Learning-purpose demo — no real money is processed
-        </span>
         <h1 className="font-display text-4xl md:text-6xl font-extrabold leading-tight">
           Rewards, referrals &amp;<br />
           <span className="text-primary">bonus points</span>, gamified.
         </h1>
         <p className="max-w-xl text-muted text-lg">
-          A demo rewards portal showing off a wallet, referral bonuses, deposit-tier cashout rules
-          and a game library — built to study the mechanics, not to move real money.
+          A rewards portal with a wallet, referral bonuses, deposit-tier cashout rules, and a
+          growing game library.
         </p>
         <div className="flex gap-3">
           <Link href="/signup" className="btn-primary">
@@ -107,7 +104,7 @@ export default async function LandingPage() {
       </main>
 
       <footer className="text-center text-xs text-muted py-6">
-        © 2026 Zara Plays. Demo project for educational purposes only.
+        © 2026 Zara Plays. All rights reserved.
       </footer>
     </div>
   );

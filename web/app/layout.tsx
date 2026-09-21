@@ -4,7 +4,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Zara Plays",
-  description: "Learning-purpose rewards platform demo — not a real money gaming site.",
+  description: "Rewards, referrals and bonus points — gamified.",
 };
 
 export const viewport: Viewport = {

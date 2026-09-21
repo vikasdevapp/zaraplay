@@ -79,7 +79,7 @@ function SignupForm() {
 
           {devPreviewUrl && (
             <div className="bg-surface2 border border-border rounded-lg px-3 py-2 mb-4 text-xs text-muted">
-              No real email provider is configured for this demo — view the actual email that was sent:{" "}
+              Email delivery isn't fully configured yet — view the message that was sent:{" "}
               <a href={devPreviewUrl} target="_blank" rel="noreferrer" className="text-primary font-medium underline">
                 Open test inbox
               </a>
