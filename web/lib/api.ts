@@ -1,4 +1,7 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+// Nullish coalescing, not ||: an empty string is a deliberate production value (same-origin,
+// Nginx proxies /api/ to the API container) and must not fall through to the dev default —
+// process.env values are either a real string or undefined, never null, so ?? is exact here.
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
 export class ApiError extends Error {
   status: number;
