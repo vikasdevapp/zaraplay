@@ -9,7 +9,11 @@ interface Game {
 }
 
 async function getGames(): Promise<Game[]> {
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+  // Server-side rendering happens inside the Docker network, so it should hit the API
+  // container directly (API_INTERNAL_URL, e.g. http://api:4000) rather than bouncing back
+  // out through the public domain/Nginx like the browser does. Falls back to the public
+  // URL for local (non-Docker) dev.
+  const apiUrl = process.env.API_INTERNAL_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
   try {
     const res = await fetch(`${apiUrl}/api/games/catalog`, { cache: "no-store" });
     if (!res.ok) return [];
