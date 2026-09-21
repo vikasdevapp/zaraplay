@@ -1,0 +1,54 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    # POSTGRES_USER/PASSWORD/DB come from here, read directly into the container — not
+    # interpolated by compose, so there's no risk of an unset host-level var silently
+    # overriding these with an empty password.
+    env_file: ./server/.env
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redisdata:/data
+
+  api:
+    build:
+      context: ./server
+    restart: unless-stopped
+    env_file: ./server/.env
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      - postgres
+      - redis
+
+  web:
+    build:
+      context: ./web
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+    restart: unless-stopped
+    environment:
+      API_INTERNAL_URL: http://api:4000
+    depends_on:
+      - api
+
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx:/etc/nginx/conf.d:ro
+    depends_on:
+      - api
+      - web
+
+volumes:
+  pgdata:
+  redisdata:
+  uploads:

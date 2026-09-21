@@ -12,9 +12,11 @@ integration — deposits, cashouts and game credentials are simulated so the bus
 - `web/` — Next.js (App Router) + TypeScript + Tailwind CSS, serving both the customer site
   (`/`, `/dashboard`, `/wallet`, …) and the admin panel (`/admin/*`) from one app.
 - `docker-compose.yml` — local Postgres + Redis for development.
+- `docker-compose.prod.yml`, `server/Dockerfile`, `web/Dockerfile`, `nginx/` — production
+  deployment (see **Deployment** below).
 
-Bulk SMS/email delivery (Twilio/SendGrid — currently stubbed, see Broadcast below) and AWS
-deployment are follow-up milestones on top of this core.
+Bulk SMS/email delivery (Twilio/SendGrid — currently stubbed, see Broadcast below) is a
+follow-up milestone on top of this core.
 
 ## Email OTP signup verification
 
@@ -114,6 +116,59 @@ cp .env.example .env.local
 npm install
 npm run dev            # http://localhost:3000
 ```
+
+## Deployment (AWS EC2)
+
+**Architecture**: one EC2 instance runs everything via Docker Compose — Nginx (port 80,
+reverse-proxying `/api/` and `/uploads/` to the API container and everything else to the
+Next.js container), the Next.js app, the Express API, Postgres, and Redis. `/admin` and
+`/agent` are routes inside the same Next.js app, not separate deployments — so all three
+planned subdomains (website/admin/agent) point at the same Nginx, which is why one `nginx/default.conf`
+server block currently answers all of them (`server_name _;`, i.e. any hostname/bare IP).
+
+### First-time EC2 setup
+
+1. SSH into the instance, then run `scripts/ec2-bootstrap.sh` (installs Docker + the Compose
+   plugin, clones the repo to `/opt/zaraplays`).
+2. `cp server/.env.production.example server/.env` and fill in real values — a random
+   `POSTGRES_PASSWORD`, a random `JWT_SECRET` (`openssl rand -hex 32`), and `CORS_ORIGIN` set
+   to whatever URL(s) the site will be reached at (comma-separated if there's more than one).
+   This file is never committed — it only exists on the server.
+3. `docker compose -f docker-compose.prod.yml build && docker compose -f docker-compose.prod.yml up -d`
+4. `docker compose -f docker-compose.prod.yml exec api npx prisma migrate deploy`
+5. `docker compose -f docker-compose.prod.yml exec api node dist/seed.js` — seeds games,
+   support agents, the master admin (`admin@zaraplays.local` / `ChangeMe123!` — **change this
+   password immediately**), and the demo agent account.
+6. In the **EC2 security group**, confirm inbound rules allow: port 22 (SSH, ideally locked
+   to your IP, not `0.0.0.0/0`), port 80 (HTTP, public). Postgres (5432) and Redis (6379)
+   should **not** be open to the public internet — they're only reached container-to-container
+   inside the Docker network, never through the security group.
+
+### CI/CD (GitHub Actions)
+
+`.github/workflows/deploy.yml` runs on every push: a `check` job (typecheck + build both
+apps) always runs; on `main` specifically, a `deploy` job then SSHes into EC2, hard-resets
+the checkout to the pushed commit, and runs `scripts/deploy.sh` (rebuild containers, restart,
+run pending Prisma migrations). Add these three repo secrets under **Settings → Secrets and
+variables → Actions**:
+
+- `EC2_HOST` — the Elastic IP (or domain, once it exists)
+- `EC2_USER` — `ubuntu` or `ec2-user`, whichever the AMI uses
+- `EC2_SSH_KEY` — the **private** key's full contents (the `.pem` file), not the public key
+
+The deploy user's key must already be authorized on the box (`~/.ssh/authorized_keys`) — the
+same key pair EC2 gave you when the instance was created works, or add a separate
+deploy-only key pair if you'd rather not reuse it.
+
+### Once the three subdomains exist
+
+1. Point each subdomain's DNS A record at the Elastic IP.
+2. In `nginx/default.conf`, replace `server_name _;` with the three hostnames.
+3. Install certbot on the box and run `sudo certbot --nginx -d website.example.com -d admin.example.com -d agent.example.com`
+   to get real HTTPS certificates and have it rewrite the Nginx config for you (auto-renews
+   via a systemd timer certbot installs).
+4. Update `CORS_ORIGIN` in `server/.env` to the `https://` versions of all three hostnames,
+   and redeploy.
 
 ## Business rules implemented
 

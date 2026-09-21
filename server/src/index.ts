@@ -17,7 +17,19 @@ import { vipRouter } from "./routes/vip";
 const app = express();
 
 app.set("trust proxy", 1);
-app.use(cors({ origin: process.env.CORS_ORIGIN || "http://localhost:3000", credentials: true }));
+
+// Comma-separated so the three planned subdomains (website/admin/agent) can share one API
+// once they exist — e.g. CORS_ORIGIN="https://website.example.com,https://admin.example.com".
+const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:3000").split(",").map((o) => o.trim());
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+      callback(new Error("Not allowed by CORS"));
+    },
+    credentials: true,
+  })
+);
 app.use(express.json());
 
 // Coarse global throttle; per-route limits (e.g. signup IP cap) layer on top of this.
