@@ -1,5 +1,9 @@
 FROM node:20-alpine AS base
 WORKDIR /app
+# Prisma's query engine binary is dynamically linked against OpenSSL, which the base Alpine
+# image doesn't include — needed both to generate the right engine (build stage) and to run
+# it (runtime stage).
+RUN apk add --no-cache openssl
 
 FROM base AS deps
 COPY package.json package-lock.json ./

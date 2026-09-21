@@ -1,5 +1,9 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // "native" covers local dev (Windows/Mac/glibc Linux); the musl target is needed for the
+  // Alpine-based production Docker image, which ships OpenSSL 3.x, not the 1.1.x Prisma
+  // defaults to on musl without this.
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
