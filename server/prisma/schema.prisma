@@ -40,6 +40,7 @@ enum TransactionStatus {
 enum BroadcastChannel {
   SMS
   EMAIL
+  PUSH
 }
 
 model User {
@@ -67,6 +68,7 @@ model User {
   chatMessages  ChatMessage[]
   auditLogs     AuditLog[]
   rouletteSpins RouletteSpin[]
+  pushSubscriptions PushSubscription[]
 }
 
 model Wallet {
@@ -199,6 +201,7 @@ model PlatformSettings {
   regularBonusPercent       Decimal  @default(20) @db.Decimal(6, 2)
   referralBonusPercent      Decimal  @default(100) @db.Decimal(6, 2)
   freeplaySignupGrant       Decimal  @default(5) @db.Decimal(12, 2)
+  phoneVerifyBonus          Decimal  @default(5) @db.Decimal(12, 2)
   freeplayCashoutCap        Decimal  @default(20) @db.Decimal(12, 2)
   cashoutTierBoundary       Decimal  @default(35) @db.Decimal(12, 2)
   cashoutTier1MinMultiplier Decimal  @default(5) @db.Decimal(6, 2)
@@ -228,4 +231,14 @@ model RouletteSpin {
   prizeLabel String
   amount     Decimal  @db.Decimal(12, 2)
   createdAt  DateTime @default(now())
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
 }

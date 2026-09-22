@@ -14,6 +14,9 @@ import { agentRouter } from "./routes/agent";
 import { marketplaceRouter } from "./routes/marketplace";
 import { vipRouter } from "./routes/vip";
 import { rouletteRouter } from "./routes/roulette";
+import { phoneRouter } from "./routes/phone";
+import { pushRouter } from "./routes/push";
+import { leaderboardRouter } from "./routes/leaderboard";
 
 const app = express();
 
@@ -57,6 +60,9 @@ app.use("/api/agent", agentRouter);
 app.use("/api/marketplace", marketplaceRouter);
 app.use("/api/vip", vipRouter);
 app.use("/api/roulette", rouletteRouter);
+app.use("/api/phone", phoneRouter);
+app.use("/api/push", pushRouter);
+app.use("/api/leaderboard", leaderboardRouter);
 
 app.use((_req, res) => res.status(404).json({ error: "Not found." }));
 

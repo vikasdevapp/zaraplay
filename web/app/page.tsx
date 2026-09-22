@@ -66,10 +66,10 @@ export default async function LandingPage() {
             { title: "Refer & Earn", body: "Earn 100% of a friend's first deposit when they join with your code." },
             { title: "Tiered Cashouts", body: "Cashout limits scale with your deposit — transparent, rule-based." },
           ].map((f) => (
-            <div key={f.title} className="card text-left">
+            <Link key={f.title} href="/signup" className="card text-left block hover:border-primary transition-colors">
               <h3 className="font-semibold text-primary mb-1">{f.title}</h3>
               <p className="text-sm text-muted">{f.body}</p>
-            </div>
+            </Link>
           ))}
         </div>
 

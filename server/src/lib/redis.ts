@@ -13,3 +13,6 @@ export const signupIpKey = (ip: string) => {
 
 // Key for a pending (not-yet-created) signup awaiting email OTP verification.
 export const pendingSignupKey = (signupToken: string) => `pending-signup:${signupToken}`;
+
+// Key for a pending phone-number verification OTP for an already-logged-in user.
+export const phoneOtpKey = (userId: string) => `phone-otp:${userId}`;

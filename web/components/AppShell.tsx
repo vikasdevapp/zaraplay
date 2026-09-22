@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { href: "/games", label: "Games", icon: "🎮" },
   { href: "/dashboard", label: "Home", icon: "🏠" },
   { href: "/wallet", label: "Wallet", icon: "💳" },
+  { href: "/leaderboard", label: "Leaders", icon: "🏆" },
   { href: "/support", label: "Support", icon: "🎧" },
 ];
 

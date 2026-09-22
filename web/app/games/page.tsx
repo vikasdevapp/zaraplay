@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import Image from "next/image";
 import AppShell from "@/components/AppShell";
 import { useApi } from "@/context/AuthContext";
 import { ApiError } from "@/lib/api";
@@ -9,6 +10,21 @@ interface Game {
   id: string;
   name: string;
   slug: string;
+  imageUrl: string | null;
+}
+
+function GameThumb({ game, className }: { game: Game; className?: string }) {
+  return (
+    <div className={`relative overflow-hidden bg-surface2 border border-border ${className ?? ""}`}>
+      {game.imageUrl ? (
+        <Image src={game.imageUrl} alt={game.name} fill unoptimized className="object-cover" sizes="200px" />
+      ) : (
+        <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary/30 to-surface2 text-xl font-bold">
+          {game.name.slice(0, 1)}
+        </div>
+      )}
+    </div>
+  );
 }
 
 interface UserGame {
@@ -27,6 +43,7 @@ export default function GamesPage() {
   const [busyGameId, setBusyGameId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
+  const [playNote, setPlayNote] = useState<string | null>(null);
 
   const loadAll = useCallback(async () => {
     const [catalogRes, mineRes] = await Promise.all([
@@ -91,12 +108,15 @@ export default function GamesPage() {
           )}
           {mine.map((ug) => (
             <div key={ug.id} className="card">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-green-400" />
-                  <p className="font-bold">{ug.game.name}</p>
+              <div className="flex items-center gap-3 mb-3">
+                <GameThumb game={ug.game} className="w-12 h-12 rounded-lg shrink-0" />
+                <div className="flex-1 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-green-400" />
+                    <p className="font-bold">{ug.game.name}</p>
+                  </div>
+                  <p className="text-primary font-semibold">${Number(ug.balance).toFixed(2)}</p>
                 </div>
-                <p className="text-primary font-semibold">${Number(ug.balance).toFixed(2)}</p>
               </div>
               <div className="text-sm space-y-2">
                 <div className="flex items-center justify-between bg-surface2 rounded-lg px-3 py-2">
@@ -120,10 +140,16 @@ export default function GamesPage() {
                 <button onClick={() => resetPassword(ug.id)} className="btn-ghost text-sm py-2">
                   🔄 Reset Password
                 </button>
-                <button className="btn-primary text-sm py-2">🎮 Play Now</button>
+                <button
+                  onClick={() => setPlayNote("Reach out to Support for the play link for this game.")}
+                  className="btn-primary text-sm py-2"
+                >
+                  🎮 Play Now
+                </button>
               </div>
             </div>
           ))}
+          {playNote && <p className="text-sm text-center text-muted">{playNote}</p>}
         </div>
       )}
 
@@ -131,7 +157,7 @@ export default function GamesPage() {
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           {available.map((g) => (
             <div key={g.id} className="card flex flex-col items-center text-center gap-2">
-              <div className="w-full aspect-square rounded-xl bg-gradient-to-br from-primary/30 to-surface2" />
+              <GameThumb game={g} className="w-full aspect-square rounded-xl" />
               <p className="text-sm font-medium">{g.name}</p>
               <button
                 onClick={() => addGame(g.id)}

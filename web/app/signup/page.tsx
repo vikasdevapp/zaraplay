@@ -128,6 +128,10 @@ function SignupForm() {
           </p>
         </div>
 
+        <div className="bg-primary/10 border border-primary/40 rounded-xl px-3 py-2 mb-4 text-center">
+          <p className="text-sm font-semibold text-primary">🎉 Get 100% match bonus on your first deposit!</p>
+        </div>
+
         <form onSubmit={handleDetailsSubmit} className="space-y-3">
           <input className="input" placeholder="Full name" value={fullName} onChange={(e) => setFullName(e.target.value)} required />
           <input
