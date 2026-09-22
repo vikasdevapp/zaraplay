@@ -13,6 +13,7 @@ import { adminRouter } from "./routes/admin";
 import { agentRouter } from "./routes/agent";
 import { marketplaceRouter } from "./routes/marketplace";
 import { vipRouter } from "./routes/vip";
+import { rouletteRouter } from "./routes/roulette";
 
 const app = express();
 
@@ -55,6 +56,7 @@ app.use("/api/admin", adminRouter);
 app.use("/api/agent", agentRouter);
 app.use("/api/marketplace", marketplaceRouter);
 app.use("/api/vip", vipRouter);
+app.use("/api/roulette", rouletteRouter);
 
 app.use((_req, res) => res.status(404).json({ error: "Not found." }));
 

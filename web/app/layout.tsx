@@ -5,6 +5,9 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Zara Plays",
   description: "Rewards, referrals and bonus points — gamified.",
+  // One Next.js app serves the customer site, /admin, and /agent, so this single icon
+  // covers all three surfaces automatically.
+  icons: { icon: "/logo.jpeg", apple: "/logo.jpeg" },
 };
 
 export const viewport: Viewport = {

@@ -27,6 +27,8 @@ enum TransactionType {
   WEEKEND_BONUS
   FREEPLAY_GRANT
   ADMIN_ADJUSTMENT
+  MARKETPLACE_REDEMPTION
+  ROULETTE_WIN
 }
 
 enum TransactionStatus {
@@ -64,6 +66,7 @@ model User {
   transactions  Transaction[]
   chatMessages  ChatMessage[]
   auditLogs     AuditLog[]
+  rouletteSpins RouletteSpin[]
 }
 
 model Wallet {
@@ -204,4 +207,25 @@ model PlatformSettings {
   ipSignupMaxPerDay         Int      @default(2)
   ipBlockMessage            String   @default("Only {max} accounts can be created per device/network each day. Please try again tomorrow.")
   updatedAt                 DateTime @updatedAt
+}
+
+model RoulettePrize {
+  id        String   @id @default(cuid())
+  label     String
+  amount    Decimal  @default(0) @db.Decimal(12, 2)
+  // Relative probability weight — a prize with weight 40 is 4x as likely as one with weight 10.
+  weight    Int      @default(1)
+  colorHex  String   @default("#8b5cf6")
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+model RouletteSpin {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  prizeLabel String
+  amount     Decimal  @db.Decimal(12, 2)
+  createdAt  DateTime @default(now())
 }

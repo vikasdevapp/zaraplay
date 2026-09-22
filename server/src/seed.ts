@@ -33,6 +33,14 @@ const MARKETPLACE_ITEMS = [
   { name: "Royal Vault", category: "High", fpCost: 500, cashValue: 100, sortOrder: 4 },
 ];
 
+// Weight = relative odds. Higher-value prizes are rarer, matching typical spin-wheel design.
+const ROULETTE_PRIZES = [
+  { label: "No Reward", amount: 0, weight: 45, colorHex: "#3a3a3a", sortOrder: 0 },
+  { label: "$1", amount: 1, weight: 30, colorHex: "#8b5cf6", sortOrder: 1 },
+  { label: "$2", amount: 2, weight: 15, colorHex: "#dc2626", sortOrder: 2 },
+  { label: "$5", amount: 5, weight: 10, colorHex: "#D4AF37", sortOrder: 3 },
+];
+
 async function main() {
   for (let i = 0; i < GAMES.length; i++) {
     const name = GAMES[i];
@@ -92,6 +100,11 @@ async function main() {
   for (const item of MARKETPLACE_ITEMS) {
     const existing = await prisma.marketplaceItem.findFirst({ where: { name: item.name } });
     if (!existing) await prisma.marketplaceItem.create({ data: item });
+  }
+
+  for (const prize of ROULETTE_PRIZES) {
+    const existing = await prisma.roulettePrize.findFirst({ where: { label: prize.label } });
+    if (!existing) await prisma.roulettePrize.create({ data: prize });
   }
 
   console.log("Seed complete.");

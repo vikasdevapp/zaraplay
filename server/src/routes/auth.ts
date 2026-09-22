@@ -1,14 +1,15 @@
 import { Router } from "express";
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
 import { z } from "zod";
 import { customAlphabet } from "../lib/nanoid";
 import { prisma } from "../lib/prisma";
-import { redis, sessionKey, pendingSignupKey, signupIpKey } from "../lib/redis";
+import { redis, pendingSignupKey, signupIpKey } from "../lib/redis";
 import { limitSignupsByIp, recordSuccessfulSignupIp, getClientIp } from "../middleware/ipLimit";
 import { getPlatformSettings } from "../lib/settings";
 import { sendOtpEmail } from "../lib/email";
+import { issueSession, getSession, clearSession, verifyRefreshToken } from "../lib/tokens";
+import { requireAuth, AuthedRequest } from "../middleware/auth";
 
 export const authRouter = Router();
 
@@ -39,19 +40,6 @@ const signupSchema = z.object({
   password: z.string().min(6).max(72),
   referralCode: z.string().optional(),
 });
-
-function signToken(userId: string, role: string) {
-  return jwt.sign({ sub: userId, role }, process.env.JWT_SECRET!, {
-    expiresIn: process.env.JWT_EXPIRES_IN || "7d",
-  } as jwt.SignOptions);
-}
-
-async function issueSession(userId: string, role: string) {
-  const token = signToken(userId, role);
-  // Overwriting the key means any previously issued token stops working on its next use.
-  await redis.set(sessionKey(userId), token);
-  return token;
-}
 
 function generateOtp() {
   return crypto.randomInt(100000, 1000000).toString();
@@ -177,10 +165,11 @@ authRouter.post("/signup/verify", async (req, res) => {
 
   await redis.del(key);
   await recordSuccessfulSignupIp(pending.ip);
-  const token = await issueSession(user.id, user.role);
+  const { accessToken, refreshToken } = await issueSession(user.id, user.role);
 
   res.status(201).json({
-    token,
+    accessToken,
+    refreshToken,
     user: { id: user.id, fullName: user.fullName, username: user.username, email: user.email, role: user.role },
     wallet: user.wallet,
   });
@@ -231,23 +220,49 @@ authRouter.post("/login", async (req, res) => {
   const ok = await bcrypt.compare(password, user.passwordHash);
   if (!ok) return res.status(401).json({ error: "Invalid credentials." });
 
-  const token = await issueSession(user.id, user.role);
+  const { accessToken, refreshToken } = await issueSession(user.id, user.role);
   res.json({
-    token,
+    accessToken,
+    refreshToken,
     user: { id: user.id, fullName: user.fullName, username: user.username, email: user.email, role: user.role },
   });
 });
 
-authRouter.post("/logout", async (req, res) => {
-  const header = req.headers.authorization;
-  const token = header?.startsWith("Bearer ") ? header.slice(7) : undefined;
-  if (token) {
-    try {
-      const payload = jwt.verify(token, process.env.JWT_SECRET!) as { sub: string };
-      await redis.del(sessionKey(payload.sub));
-    } catch {
-      // token already invalid; nothing to clean up
-    }
+const refreshSchema = z.object({ refreshToken: z.string().min(1) });
+
+// Silently mints a new short-lived access token from a still-valid refresh token, so the
+// user isn't forced to log in again every 15 minutes. The refresh token itself is rotated
+// (a fresh one is issued each time) and must still match what's on record in Redis — the
+// same single-device check used everywhere else, so a refresh token invalidated by a login
+// on another device stops working here too, not just for the access token.
+authRouter.post("/refresh", async (req, res) => {
+  const parsed = refreshSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid input." });
+
+  let payload;
+  try {
+    payload = verifyRefreshToken(parsed.data.refreshToken);
+  } catch {
+    return res.status(401).json({ error: "Session expired. Please log in again." });
   }
+
+  const session = await getSession(payload.sub);
+  if (!session || session.refreshToken !== parsed.data.refreshToken) {
+    return res.status(401).json({ error: "This session is no longer valid — you may have signed in elsewhere. Please log in again." });
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: payload.sub } });
+  if (!user) return res.status(401).json({ error: "Account no longer exists." });
+
+  const { accessToken, refreshToken } = await issueSession(user.id, user.role);
+  res.json({
+    accessToken,
+    refreshToken,
+    user: { id: user.id, fullName: user.fullName, username: user.username, email: user.email, role: user.role },
+  });
+});
+
+authRouter.post("/logout", requireAuth, async (req: AuthedRequest, res) => {
+  await clearSession(req.userId!);
   res.json({ ok: true });
 });

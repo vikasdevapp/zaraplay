@@ -1,6 +1,5 @@
 import { NextFunction, Request, Response } from "express";
-import jwt from "jsonwebtoken";
-import { redis, sessionKey } from "../lib/redis";
+import { getSession, verifyAccessToken } from "../lib/tokens";
 
 export interface AuthedRequest extends Request {
   userId?: string;
@@ -14,14 +13,17 @@ export async function requireAuth(req: AuthedRequest, res: Response, next: NextF
 
   let payload: { sub: string; role: string };
   try {
-    payload = jwt.verify(token, process.env.JWT_SECRET!) as { sub: string; role: string };
+    payload = verifyAccessToken(token);
   } catch {
+    // Covers both "signature/format invalid" and "expired" — either way the client's fix is
+    // the same: call POST /api/auth/refresh, or log in again if the refresh token is gone too.
     return res.status(401).json({ error: "Invalid or expired session." });
   }
 
-  // Single-device enforcement: the token must match the most recently issued one for this user.
-  const activeToken = await redis.get(sessionKey(payload.sub));
-  if (activeToken !== token) {
+  // Single-device enforcement: the access token must match the one from the most recently
+  // issued session for this user (login or refresh both overwrite it).
+  const session = await getSession(payload.sub);
+  if (!session || session.accessToken !== token) {
     return res.status(401).json({ error: "You have been logged out because this account was signed in on another device." });
   }
 

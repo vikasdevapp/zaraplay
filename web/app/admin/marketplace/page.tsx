@@ -68,8 +68,8 @@ export default function AdminMarketplacePage() {
     <AdminShell>
       <h1 className="text-2xl font-bold mb-6">Marketplace</h1>
       <p className="text-muted text-sm mb-4">
-        Free-play → cash redemption catalog. Redemptions immediately hold the free play and create a pending
-        cashout — approve or reject them from the Cashouts queue.
+        Free-play → cash redemption catalog. Redemptions are instant — free play is spent and the cash value is
+        credited straight to the player's balance, no approval needed.
       </p>
 
       <form onSubmit={handleCreate} className="card mb-6 space-y-3">

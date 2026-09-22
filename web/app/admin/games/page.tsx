@@ -3,8 +3,8 @@
 import { useEffect, useState, useCallback, useRef, FormEvent } from "react";
 import Image from "next/image";
 import AdminShell from "@/components/AdminShell";
-import { useApi, useAuth } from "@/context/AuthContext";
-import { ApiError, apiUpload } from "@/lib/api";
+import { useApi, useApiUpload } from "@/context/AuthContext";
+import { ApiError } from "@/lib/api";
 
 interface Game {
   id: string;
@@ -21,7 +21,7 @@ const emptyForm = { name: "", imageUrl: "", playUrl: "", isActive: true };
 
 export default function AdminGamesPage() {
   const api = useApi();
-  const { token } = useAuth();
+  const apiUpload = useApiUpload();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [games, setGames] = useState<Game[]>([]);
@@ -46,7 +46,7 @@ export default function AdminGamesPage() {
     setError(null);
     setUploading(true);
     try {
-      const res = await apiUpload<{ url: string }>("/api/admin/games/upload-image", file, "image", token);
+      const res = await apiUpload<{ url: string }>("/api/admin/games/upload-image", file, "image");
       setForm((f) => ({ ...f, imageUrl: res.url }));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Image upload failed.");

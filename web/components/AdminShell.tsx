@@ -17,6 +17,7 @@ const NAV_ITEMS = [
   { href: "/admin/users", label: "Users", icon: "👥" },
   { href: "/admin/vip-tiers", label: "VIP Tiers", icon: "🏆" },
   { href: "/admin/marketplace", label: "Marketplace", icon: "🛍️" },
+  { href: "/admin/roulette", label: "Roulette Wheel", icon: "🎡" },
   { href: "/admin/support", label: "Support", icon: "🎧" },
   { href: "/admin/broadcast", label: "Broadcast", icon: "📣" },
   { href: "/admin/platform-rules", label: "Platform Rules", icon: "📜" },

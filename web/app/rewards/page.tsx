@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import AppShell from "@/components/AppShell";
 import { useApi, useAuth } from "@/context/AuthContext";
 import { ApiError } from "@/lib/api";
+import RouletteWheel from "@/components/RouletteWheel";
 
 interface ReferralData {
   referralCode: string;
@@ -139,9 +140,9 @@ export default function RewardsPage() {
           </div>
         </div>
 
-        <div className="card opacity-70">
-          <h2 className="font-bold mb-1">🎡 Roulette</h2>
-          <p className="text-sm text-muted">Spin to win every day — coming soon.</p>
+        <div className="card">
+          <h2 className="font-bold mb-3">🎡 Roulette</h2>
+          <RouletteWheel />
         </div>
 
         <div className="card">
@@ -149,7 +150,7 @@ export default function RewardsPage() {
             <h2 className="font-bold">🛍️ Marketplace</h2>
             <span className="text-sm text-primary font-medium">{freePlay.toFixed(0)} FP</span>
           </div>
-          <p className="text-sm text-muted mb-3">Trade free play for real cash — redemptions go to admin for approval.</p>
+          <p className="text-sm text-muted mb-3">Trade free play for real cash — credited to your balance instantly.</p>
           {message && <p className={`text-sm mb-2 ${message.type === "error" ? "text-red-400" : "text-green-400"}`}>{message.text}</p>}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
             {items.map((it) => (
