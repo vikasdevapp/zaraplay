@@ -5,6 +5,9 @@ import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { calcDepositBonus } from "../utils/bonus";
 import { evaluateCashout } from "../utils/cashout";
 import { getPlatformSettings } from "../lib/settings";
+import { createPayOrder, gateway, GatewayError, publicIpv4, TRANSFER_ACCOUNT_FIELD } from "../lib/ggusonepay";
+import { PROVIDER, syncDeposit } from "../lib/paymentSync";
+import { rejectDeposit } from "../utils/deposit";
 
 export const walletRouter = Router();
 walletRouter.use(requireAuth);
@@ -24,13 +27,28 @@ walletRouter.get("/transactions", async (req: AuthedRequest, res) => {
   res.json({ transactions });
 });
 
-const depositSchema = z.object({ amount: z.number().positive().max(1000000) });
+walletRouter.get("/payment-options", (_req, res) => {
+  res.json({
+    deposit: { gateway: gateway.payEnabled, methods: gateway.payEnabled ? gateway.payWayCodes : [] },
+    cashout: {
+      gateway: gateway.transferEnabled,
+      methods: gateway.transferEnabled ? gateway.transferWayCodes.filter((w) => TRANSFER_ACCOUNT_FIELD[w]) : [],
+    },
+  });
+});
 
-// NOTE: this simulates a deposit landing (no real payment processor is wired up here).
+const depositSchema = z.object({
+  amount: z.number().positive().max(1000000),
+  wayCode: z.string().max(30).optional(),
+  deviceId: z.string().max(200).optional(),
+});
+
 walletRouter.post("/deposit", async (req: AuthedRequest, res) => {
   const parsed = depositSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid deposit amount." });
-  const { amount } = parsed.data;
+  const { wayCode, deviceId } = parsed.data;
+  // Whole cents only, so the DB amount and the gateway's integer-cents amount always agree.
+  const amount = Math.round(parsed.data.amount * 100) / 100;
 
   const settings = await getPlatformSettings();
   if (amount < Number(settings.minDeposit) || amount > Number(settings.maxDeposit)) {
@@ -49,6 +67,49 @@ walletRouter.post("/deposit", async (req: AuthedRequest, res) => {
   const isFirstDeposit = !wallet.hasDeposited;
   const bonus = calcDepositBonus(amount, isFirstDeposit, settings);
 
+  if (gateway.payEnabled) {
+    const method = wayCode || gateway.payWayCodes[0];
+    if (!gateway.payWayCodes.includes(method)) return res.status(400).json({ error: "Unsupported payment method." });
+
+    // The transaction id doubles as the gateway's mchOrderNo, so callbacks map straight back.
+    const transaction = await prisma.transaction.create({
+      data: {
+        userId: req.userId!,
+        type: "DEPOSIT",
+        amount,
+        status: "PENDING",
+        payoutAmount: bonus.amount,
+        gatewayProvider: PROVIDER,
+        meta: { bonusKind: bonus.kind, bonusPercent: bonus.percent, isFirstDeposit, wayCode: method },
+      },
+    });
+
+    try {
+      const order = await createPayOrder({
+        mchOrderNo: transaction.id,
+        amount,
+        wayCode: method,
+        userId: req.userId!,
+        clientIp: publicIpv4(req.ip),
+        deviceId,
+      });
+      const updated = await prisma.transaction.update({
+        where: { id: transaction.id },
+        data: {
+          gatewayOrderNo: order.payOrderNo,
+          meta: { ...(transaction.meta as object), cashierUrl: order.cashierUrl, expireTimestamp: order.expireTimestamp },
+        },
+      });
+      return res.json({ transaction: updated, bonus, cashierUrl: order.cashierUrl });
+    } catch (err) {
+      const message = err instanceof GatewayError ? err.message : "Payment gateway is unavailable.";
+      console.error(`[ggusonepay] create pay order failed for ${transaction.id}`, err);
+      await rejectDeposit(transaction.id, `Gateway error: ${message}`);
+      return res.status(502).json({ error: "Could not start the payment. Please try again shortly." });
+    }
+  }
+
+  // No gateway configured: fall back to a manual request an admin approves.
   const transaction = await prisma.transaction.create({
     data: {
       userId: req.userId!,
@@ -67,15 +128,58 @@ walletRouter.post("/deposit", async (req: AuthedRequest, res) => {
   });
 });
 
+// Called when the user lands back from the cashier page: refreshes the deposit from the
+// gateway so the wallet updates even before (or without) the callback arriving.
+walletRouter.post("/deposit/:id/refresh", async (req: AuthedRequest, res) => {
+  const transaction = await prisma.transaction.findUnique({ where: { id: req.params.id } });
+  if (!transaction || transaction.userId !== req.userId || transaction.type !== "DEPOSIT") {
+    return res.status(404).json({ error: "Deposit not found." });
+  }
+  try {
+    res.json({ transaction: await syncDeposit(transaction) });
+  } catch (err) {
+    console.error(`[ggusonepay] refresh failed for ${transaction.id}`, err);
+    res.json({ transaction });
+  }
+});
+
 const cashoutSchema = z.object({
   amount: z.number().positive(),
   fromFreePlay: z.boolean().optional().default(false),
+  payout: z
+    .object({ wayCode: z.string().max(30), account: z.string().trim().min(2).max(100) })
+    .optional(),
 });
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Mirrors the gateway's wayParam rules so bad details fail here, not at payout time.
+function payoutAccountError(wayCode: string, account: string): string | null {
+  switch (wayCode) {
+    case "ecashapp":
+      return /^\$[A-Za-z0-9_-]{3,20}$/.test(account) ? null : "Enter a valid $Cashtag (e.g. $yourname).";
+    case "chime":
+      return /^\$\S{3,49}$/.test(account) ? null : "Enter a valid $ChimeSign (e.g. $yourname).";
+    case "paypal":
+    case "venmo":
+      return EMAIL_RE.test(account) ? null : "Enter a valid email address.";
+    case "zelle":
+      return EMAIL_RE.test(account) || /^\+?\d{10,15}$/.test(account) ? null : "Enter the email or phone number on your Zelle account.";
+    default:
+      return "Unsupported payout method.";
+  }
+}
 
 walletRouter.post("/cashout", async (req: AuthedRequest, res) => {
   const parsed = cashoutSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid cashout amount." });
-  const { amount, fromFreePlay } = parsed.data;
+  const { amount, fromFreePlay, payout } = parsed.data;
+
+  if (gateway.transferEnabled) {
+    if (!payout) return res.status(400).json({ error: "Choose where to receive your payout." });
+    if (!gateway.transferWayCodes.includes(payout.wayCode)) return res.status(400).json({ error: "Unsupported payout method." });
+    const accountError = payoutAccountError(payout.wayCode, payout.account);
+    if (accountError) return res.status(400).json({ error: accountError });
+  }
 
   const wallet = await prisma.wallet.findUnique({ where: { userId: req.userId! } });
   if (!wallet) return res.status(404).json({ error: "Wallet not found." });
@@ -109,7 +213,7 @@ walletRouter.post("/cashout", async (req: AuthedRequest, res) => {
         status: "PENDING",
         payoutAmount: evaluation.payout,
         forfeitedAmount: evaluation.forfeited,
-        meta: { fromFreePlay },
+        meta: gateway.transferEnabled && payout ? { fromFreePlay, payout } : { fromFreePlay },
       },
     });
     return { wallet: w, transaction };

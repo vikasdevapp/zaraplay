@@ -15,12 +15,25 @@ interface Stats {
   freePlayLiability: string;
 }
 
+interface GatewayStatus {
+  configured: boolean;
+  payEnabled: boolean;
+  transferEnabled: boolean;
+  healthy: boolean | null;
+  accounts: { currency: string; balance: number; availableBalance: number; transferPendingAmount: number }[];
+  balanceError?: string | null;
+}
+
+const cents = (v: number) => `$${(v / 100).toFixed(2)}`;
+
 export default function AdminDashboardPage() {
   const api = useApi();
   const [stats, setStats] = useState<Stats | null>(null);
+  const [gateway, setGateway] = useState<GatewayStatus | null>(null);
 
   useEffect(() => {
     api<Stats>("/api/admin/stats").then(setStats).catch(() => {});
+    api<GatewayStatus>("/api/admin/payment-gateway").then(setGateway).catch(() => {});
   }, [api]);
 
   const cards = stats
@@ -64,6 +77,39 @@ export default function AdminDashboardPage() {
           <Link href="/admin/cashouts" className="text-primary text-sm font-medium">
             Review now →
           </Link>
+        </div>
+      )}
+
+      {gateway && (
+        <div className="card mt-6">
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="font-bold">Payment Gateway</h2>
+            <span
+              className={`text-xs px-2 py-0.5 rounded ${
+                !gateway.configured
+                  ? "bg-surface2 text-muted"
+                  : gateway.healthy
+                    ? "bg-green-500/20 text-green-400"
+                    : "bg-red-500/20 text-red-400"
+              }`}
+            >
+              {!gateway.configured ? "Not configured" : gateway.healthy ? "Online" : "Unreachable"}
+            </span>
+          </div>
+          {gateway.configured && (
+            <>
+              <p className="text-xs text-muted mb-2">
+                Deposits: {gateway.payEnabled ? "via gateway" : "manual"} · Payouts: {gateway.transferEnabled ? "via gateway" : "manual"}
+              </p>
+              {gateway.balanceError && <p className="text-xs text-red-400">{gateway.balanceError}</p>}
+              {gateway.accounts.map((a) => (
+                <p key={a.currency} className="text-sm">
+                  <span className="uppercase font-medium">{a.currency}</span> · Available {cents(a.availableBalance)} · Balance{" "}
+                  {cents(a.balance)} · Pending payouts {cents(a.transferPendingAmount)}
+                </p>
+              ))}
+            </>
+          )}
         </div>
       )}
     </AdminShell>

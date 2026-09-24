@@ -17,6 +17,7 @@ import { rouletteRouter } from "./routes/roulette";
 import { phoneRouter } from "./routes/phone";
 import { pushRouter } from "./routes/push";
 import { leaderboardRouter } from "./routes/leaderboard";
+import { paymentsRouter } from "./routes/payments";
 
 const app = express();
 
@@ -35,6 +36,10 @@ app.use(
   })
 );
 app.use(express.json());
+
+// Mounted ahead of the global throttle: gateway callbacks all arrive from one IP and a burst
+// of retries must not be rate-limited into failure.
+app.use("/api/payments", paymentsRouter);
 
 // Coarse global throttle; per-route limits (e.g. signup IP cap) layer on top of this.
 app.use(

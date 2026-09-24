@@ -3,6 +3,9 @@ import { z } from "zod";
 import { prisma } from "../../lib/prisma";
 import { AuthedRequest } from "../../middleware/auth";
 import { logAudit } from "../../lib/audit";
+import { createTransfer, FINAL_FAILURE_STATES, gateway, GatewayError, ORDER_STATE } from "../../lib/ggusonepay";
+import { PROVIDER, syncCashout } from "../../lib/paymentSync";
+import { completeCashout, refundCashout } from "../../utils/payout";
 
 export const adminCashoutsRouter = Router();
 
@@ -24,13 +27,76 @@ adminCashoutsRouter.post("/:id/approve", async (req: AuthedRequest, res) => {
   const transaction = await prisma.transaction.findUnique({ where: { id: req.params.id } });
   if (!transaction || transaction.type !== "CASHOUT") return res.status(404).json({ error: "Cashout request not found." });
   if (transaction.status !== "PENDING") return res.status(409).json({ error: `This request is already ${transaction.status.toLowerCase()}.` });
+  if (transaction.gatewayProvider) return res.status(409).json({ error: "This payout was already sent to the payment gateway." });
 
-  const updated = await prisma.transaction.update({
-    where: { id: transaction.id },
-    data: { status: "COMPLETED" },
+  const payout = (transaction.meta as { payout?: { wayCode: string; account: string } } | null)?.payout;
+  const auditMeta = { userId: transaction.userId, amount: transaction.amount, payout };
+
+  // No payout details (manual request, or gateway not configured): the admin paid it by hand.
+  if (!payout || !gateway.transferEnabled) {
+    const updated = await completeCashout(transaction.id, { paidManually: true });
+    if (!updated) return res.status(409).json({ error: "This request was already processed." });
+    await logAudit(req.userId!, "CASHOUT_APPROVED", { targetType: "Transaction", targetId: transaction.id, meta: auditMeta });
+    return res.json({ transaction: updated });
+  }
+
+  // Claim the cashout for the gateway before calling it, so a double click or a concurrent
+  // reject can't send the same payout twice or refund one that's already on its way.
+  const claimed = await prisma.transaction.updateMany({
+    where: { id: transaction.id, status: "PENDING", gatewayProvider: null },
+    data: { gatewayProvider: PROVIDER },
   });
-  await logAudit(req.userId!, "CASHOUT_APPROVED", { targetType: "Transaction", targetId: transaction.id, meta: { userId: transaction.userId, amount: transaction.amount } });
-  res.json({ transaction: updated });
+  if (claimed.count === 0) return res.status(409).json({ error: "This request was already processed." });
+
+  try {
+    const order = await createTransfer({
+      mchOrderNo: transaction.id,
+      amount: Number(transaction.payoutAmount ?? transaction.amount),
+      wayCode: payout.wayCode,
+      account: payout.account,
+    });
+    await prisma.transaction.update({
+      where: { id: transaction.id },
+      data: { gatewayOrderNo: order.transferOrderNo },
+    });
+    await logAudit(req.userId!, "CASHOUT_APPROVED", {
+      targetType: "Transaction",
+      targetId: transaction.id,
+      meta: { ...auditMeta, transferOrderNo: order.transferOrderNo },
+    });
+
+    let updated = await prisma.transaction.findUnique({ where: { id: transaction.id } });
+    if (order.state === ORDER_STATE.SUCCESS) updated = await completeCashout(transaction.id, { gatewayState: order.state });
+    else if (FINAL_FAILURE_STATES.includes(order.state)) {
+      updated = await refundCashout(transaction.id, `Payout failed: ${order.errMsg || "rejected by gateway"}`, { gatewayState: order.state });
+    }
+    return res.json({ transaction: updated, note: "Payout sent to the payment gateway." });
+  } catch (err) {
+    if (err instanceof GatewayError) {
+      // The gateway answered with a definite refusal, so nothing was sent: release the claim
+      // and leave it pending for the admin to retry or reject.
+      await prisma.transaction.update({ where: { id: transaction.id }, data: { gatewayProvider: null } });
+      return res.status(502).json({ error: `Payment gateway refused the payout: ${err.message}` });
+    }
+    // Timeout/network error: the transfer may or may not exist, so keep the claim and let the
+    // callback or a status check settle it.
+    console.error(`[ggusonepay] create transfer uncertain for ${transaction.id}`, err);
+    return res.status(202).json({
+      error: "The gateway did not respond. The payout may still go through; use Check status in a minute.",
+    });
+  }
+});
+
+// Re-reads a gateway payout's state (for when a callback was missed).
+adminCashoutsRouter.post("/:id/sync", async (req: AuthedRequest, res) => {
+  const transaction = await prisma.transaction.findUnique({ where: { id: req.params.id } });
+  if (!transaction || transaction.type !== "CASHOUT") return res.status(404).json({ error: "Cashout request not found." });
+  if (transaction.gatewayProvider !== PROVIDER) return res.status(400).json({ error: "This cashout was not sent to the gateway." });
+  try {
+    res.json({ transaction: await syncCashout(transaction) });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof GatewayError ? err.message : "Payment gateway is unavailable." });
+  }
 });
 
 const rejectSchema = z.object({ reason: z.string().max(200).optional() });
@@ -42,21 +108,12 @@ adminCashoutsRouter.post("/:id/reject", async (req: AuthedRequest, res) => {
   const transaction = await prisma.transaction.findUnique({ where: { id: req.params.id } });
   if (!transaction || transaction.type !== "CASHOUT") return res.status(404).json({ error: "Cashout request not found." });
   if (transaction.status !== "PENDING") return res.status(409).json({ error: `This request is already ${transaction.status.toLowerCase()}.` });
+  if (transaction.gatewayProvider) {
+    return res.status(409).json({ error: "This payout is already with the payment gateway and can't be rejected here." });
+  }
 
-  const fromFreePlay = (transaction.meta as { fromFreePlay?: boolean } | null)?.fromFreePlay ?? false;
-
-  const updated = await prisma.$transaction(async (tx) => {
-    await tx.wallet.update({
-      where: { userId: transaction.userId },
-      data: fromFreePlay
-        ? { freePlay: { increment: transaction.amount } }
-        : { balance: { increment: transaction.amount } },
-    });
-    return tx.transaction.update({
-      where: { id: transaction.id },
-      data: { status: "REJECTED", adminNote: parsed.data.reason || null },
-    });
-  });
+  const updated = await refundCashout(transaction.id, parsed.data.reason || null, undefined, { onlyIfUnclaimed: true });
+  if (!updated) return res.status(409).json({ error: "This request was already processed." });
 
   await logAudit(req.userId!, "CASHOUT_REJECTED", {
     targetType: "Transaction",

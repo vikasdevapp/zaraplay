@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useCallback, FormEvent } from "react";
+import { useEffect, useState, useCallback, FormEvent, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import { useApi } from "@/context/AuthContext";
 import { ApiError } from "@/lib/api";
@@ -21,8 +22,40 @@ interface Transaction {
   forfeitedAmount?: string | null;
 }
 
-export default function WalletPage() {
+interface PaymentOptions {
+  deposit: { gateway: boolean; methods: string[] };
+  cashout: { gateway: boolean; methods: string[] };
+}
+
+const METHOD_LABELS: Record<string, string> = {
+  cashapp: "Cash App",
+  ecashapp: "Cash App",
+  zelle: "Zelle",
+  btcpay: "Cash App (BTC)",
+  paypal: "PayPal",
+  applepay: "Apple Pay",
+  googlepay: "Google Pay",
+  card: "Card",
+  chime: "Chime",
+  venmo: "Venmo",
+};
+
+const PAYOUT_PLACEHOLDER: Record<string, string> = {
+  ecashapp: "$Cashtag",
+  chime: "$ChimeSign",
+  paypal: "PayPal email",
+  venmo: "Venmo email",
+  zelle: "Zelle email or phone",
+};
+
+function WalletContent() {
   const api = useApi();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [options, setOptions] = useState<PaymentOptions | null>(null);
+  const [depositMethod, setDepositMethod] = useState("");
+  const [payoutMethod, setPayoutMethod] = useState("");
+  const [payoutAccount, setPayoutAccount] = useState("");
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [depositAmount, setDepositAmount] = useState("");
@@ -41,17 +74,44 @@ export default function WalletPage() {
 
   useEffect(() => {
     load().catch(() => {});
-  }, [load]);
+    api<PaymentOptions>("/api/wallet/payment-options")
+      .then((o) => {
+        setOptions(o);
+        setDepositMethod(o.deposit.methods[0] || "");
+        setPayoutMethod(o.cashout.methods[0] || "");
+      })
+      .catch(() => {});
+  }, [load, api]);
+
+  // Back from the gateway's cashier page (returnUrl = /wallet?status=…&mchOrderNo=…). The
+  // query string is only a hint; the server re-checks the order with the gateway.
+  const returnedOrder = searchParams.get("mchOrderNo");
+  useEffect(() => {
+    if (!returnedOrder) return;
+    router.replace("/wallet");
+    api<{ transaction: Transaction }>(`/api/wallet/deposit/${encodeURIComponent(returnedOrder)}/refresh`, { method: "POST" })
+      .then(({ transaction }) => {
+        if (transaction.status === "COMPLETED") setMessage({ type: "success", text: "Payment received — your balance has been updated." });
+        else if (transaction.status === "REJECTED") setMessage({ type: "error", text: "The payment was not completed." });
+        else setMessage({ type: "success", text: "Payment is processing. Your balance will update as soon as it's confirmed." });
+        return load();
+      })
+      .catch(() => {});
+  }, [returnedOrder, api, load, router]);
 
   async function handleDeposit(e: FormEvent) {
     e.preventDefault();
     setMessage(null);
     setBusy("deposit");
     try {
-      const res = await api<{ bonus: { kind: string; percent: number; amount: number } }>("/api/wallet/deposit", {
+      const res = await api<{ bonus: { kind: string; percent: number; amount: number }; cashierUrl?: string }>("/api/wallet/deposit", {
         method: "POST",
-        body: JSON.stringify({ amount: Number(depositAmount) }),
+        body: JSON.stringify({ amount: Number(depositAmount), wayCode: depositMethod || undefined }),
       });
+      if (res.cashierUrl) {
+        window.location.href = res.cashierUrl;
+        return;
+      }
       setMessage({
         type: "success",
         text: `Deposit requested — pending admin approval. Once approved you'll get +${res.bonus.percent}% bonus ($${res.bonus.amount.toFixed(2)}).`,
@@ -72,7 +132,10 @@ export default function WalletPage() {
     try {
       const res = await api<{ payout: number; forfeited: number; note?: string }>("/api/wallet/cashout", {
         method: "POST",
-        body: JSON.stringify({ amount: Number(cashoutAmount) }),
+        body: JSON.stringify({
+          amount: Number(cashoutAmount),
+          payout: options?.cashout.gateway ? { wayCode: payoutMethod, account: payoutAccount } : undefined,
+        }),
       });
       setMessage({
         type: "success",
@@ -109,12 +172,23 @@ export default function WalletPage() {
               onChange={(e) => setDepositAmount(e.target.value)}
               required
             />
+            {options?.deposit.gateway && options.deposit.methods.length > 1 && (
+              <select className="input" value={depositMethod} onChange={(e) => setDepositMethod(e.target.value)}>
+                {options.deposit.methods.map((m) => (
+                  <option key={m} value={m}>
+                    {METHOD_LABELS[m] || m}
+                  </option>
+                ))}
+              </select>
+            )}
             <button type="submit" className="btn-primary w-full" disabled={busy === "deposit"}>
-              {busy === "deposit" ? "Processing…" : "Deposit"}
+              {busy === "deposit" ? "Processing…" : options?.deposit.gateway ? "Continue to payment" : "Deposit"}
             </button>
             <p className="text-xs text-muted">
-              First deposit: 100% bonus · Tuesdays: 50% bonus · Otherwise: 20% bonus. Requests need
-              admin approval before funds land in your balance.
+              First deposit: 100% bonus · Tuesdays: 50% bonus · Otherwise: 20% bonus.{" "}
+              {options?.deposit.gateway
+                ? "You'll be taken to a secure payment page; funds land in your balance once payment is confirmed."
+                : "Requests need admin approval before funds land in your balance."}
             </p>
           </form>
 
@@ -130,6 +204,24 @@ export default function WalletPage() {
               onChange={(e) => setCashoutAmount(e.target.value)}
               required
             />
+            {options?.cashout.gateway && (
+              <>
+                <select className="input" value={payoutMethod} onChange={(e) => setPayoutMethod(e.target.value)}>
+                  {options.cashout.methods.map((m) => (
+                    <option key={m} value={m}>
+                      {METHOD_LABELS[m] || m}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  className="input"
+                  placeholder={PAYOUT_PLACEHOLDER[payoutMethod] || "Payout account"}
+                  value={payoutAccount}
+                  onChange={(e) => setPayoutAccount(e.target.value)}
+                  required
+                />
+              </>
+            )}
             <button type="submit" className="btn-gold w-full" disabled={busy === "cashout"}>
               {busy === "cashout" ? "Processing…" : "Cashout"}
             </button>
@@ -179,5 +271,14 @@ export default function WalletPage() {
         </div>
       </div>
     </AppShell>
+  );
+}
+
+// useSearchParams (cashier return) needs a Suspense boundary for the static build.
+export default function WalletPage() {
+  return (
+    <Suspense>
+      <WalletContent />
+    </Suspense>
   );
 }

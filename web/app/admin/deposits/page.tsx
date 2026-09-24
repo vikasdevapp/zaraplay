@@ -13,7 +13,9 @@ interface Deposit {
   status: "PENDING" | "COMPLETED" | "REJECTED";
   adminNote: string | null;
   createdAt: string;
-  meta: { bonusKind?: string; bonusPercent?: number } | null;
+  gatewayProvider: string | null;
+  gatewayOrderNo: string | null;
+  meta: { bonusKind?: string; bonusPercent?: number; wayCode?: string; amountMismatch?: boolean } | null;
   user: { id: string; fullName: string; username: string; email: string };
 }
 
@@ -46,6 +48,19 @@ export default function AdminDepositsPage() {
       await load(tab);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not approve.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function sync(id: string) {
+    setError(null);
+    setBusyId(id);
+    try {
+      await api(`/api/admin/deposits/${id}/sync`, { method: "POST" });
+      await load(tab);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not check status.");
     } finally {
       setBusyId(null);
     }
@@ -92,6 +107,12 @@ export default function AdminDepositsPage() {
               </Link>
               <span className="text-muted text-sm"> · @{d.user.username}</span>
               <p className="text-xs text-muted">{new Date(d.createdAt).toLocaleString()}</p>
+              {d.gatewayProvider && (
+                <p className="text-xs text-yellow-400">
+                  Via gateway{d.meta?.wayCode ? ` · ${d.meta.wayCode}` : ""}
+                  {d.gatewayOrderNo ? ` · ${d.gatewayOrderNo}` : ""}
+                </p>
+              )}
               {d.adminNote && <p className="text-xs text-muted">Note: {d.adminNote}</p>}
             </div>
             <div className="flex items-center gap-4">
@@ -105,9 +126,17 @@ export default function AdminDepositsPage() {
               </div>
               {tab === "PENDING" && (
                 <div className="flex gap-2">
-                  <button onClick={() => approve(d.id)} disabled={busyId === d.id} className="btn-primary text-sm py-2 px-3">
-                    Approve
-                  </button>
+                  {d.gatewayProvider && (
+                    <button onClick={() => sync(d.id)} disabled={busyId === d.id} className="btn-ghost text-sm py-2 px-3">
+                      Check status
+                    </button>
+                  )}
+                  {/* Gateway deposits credit themselves once paid; manual approval is only for settling a mismatched amount. */}
+                  {(!d.gatewayProvider || d.meta?.amountMismatch) && (
+                    <button onClick={() => approve(d.id)} disabled={busyId === d.id} className="btn-primary text-sm py-2 px-3">
+                      {d.gatewayProvider ? "Approve anyway" : "Approve"}
+                    </button>
+                  )}
                   <button onClick={() => reject(d.id)} disabled={busyId === d.id} className="btn-ghost text-sm py-2 px-3 text-red-400">
                     Reject
                   </button>

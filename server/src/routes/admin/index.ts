@@ -16,6 +16,7 @@ import { adminDepositsRouter } from "./deposits";
 import { adminVipTiersRouter } from "./vipTiers";
 import { adminMarketplaceRouter } from "./marketplace";
 import { adminRouletteRouter } from "./roulette";
+import { adminPaymentGatewayRouter } from "./paymentGateway";
 
 export const adminRouter = Router();
 
@@ -37,6 +38,7 @@ adminRouter.use("/deposits", adminDepositsRouter);
 adminRouter.use("/vip-tiers", adminVipTiersRouter);
 adminRouter.use("/marketplace", adminMarketplaceRouter);
 adminRouter.use("/roulette", adminRouletteRouter);
+adminRouter.use("/payment-gateway", adminPaymentGatewayRouter);
 
 // Only MASTER_ADMIN can create or remove other admin accounts.
 adminRouter.use("/staff", requireRole("MASTER_ADMIN"), adminStaffRouter);

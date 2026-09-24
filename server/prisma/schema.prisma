@@ -95,6 +95,10 @@ model Transaction {
   forfeitedAmount Decimal?           @db.Decimal(12, 2)
   adminNote       String?
   meta            Json?
+  // Set when the transaction is handed to a payment gateway (claimed atomically, so a
+  // cashout can't be submitted for payout twice); gatewayOrderNo is the gateway's own id.
+  gatewayProvider String?
+  gatewayOrderNo  String?
   createdAt       DateTime           @default(now())
 }
 
