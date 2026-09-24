@@ -15,7 +15,7 @@ interface Deposit {
   createdAt: string;
   gatewayProvider: string | null;
   gatewayOrderNo: string | null;
-  meta: { bonusKind?: string; bonusPercent?: number; wayCode?: string; amountMismatch?: boolean } | null;
+  meta: { bonusKind?: string; bonusPercent?: number; wayCode?: string; amountMismatch?: boolean; gatewayAlert?: string } | null;
   user: { id: string; fullName: string; username: string; email: string };
 }
 
@@ -113,6 +113,9 @@ export default function AdminDepositsPage() {
                   {d.gatewayOrderNo ? ` · ${d.gatewayOrderNo}` : ""}
                 </p>
               )}
+              {d.meta?.gatewayAlert && (
+                <p className="text-xs font-semibold text-red-400">⚠ Gateway reports {d.meta.gatewayAlert.toLowerCase()}</p>
+              )}
               {d.adminNote && <p className="text-xs text-muted">Note: {d.adminNote}</p>}
             </div>
             <div className="flex items-center gap-4">
@@ -124,6 +127,11 @@ export default function AdminDepositsPage() {
                   </p>
                 )}
               </div>
+              {tab === "COMPLETED" && d.gatewayProvider && (
+                <button onClick={() => sync(d.id)} disabled={busyId === d.id} className="btn-ghost text-sm py-2 px-3">
+                  Check status
+                </button>
+              )}
               {tab === "PENDING" && (
                 <div className="flex gap-2">
                   {d.gatewayProvider && (

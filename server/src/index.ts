@@ -18,6 +18,7 @@ import { phoneRouter } from "./routes/phone";
 import { pushRouter } from "./routes/push";
 import { leaderboardRouter } from "./routes/leaderboard";
 import { paymentsRouter } from "./routes/payments";
+import { startPaymentReconciler } from "./jobs/paymentReconciler";
 
 const app = express();
 
@@ -81,4 +82,5 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 const port = Number(process.env.PORT || 4000);
 app.listen(port, () => {
   console.log(`Zara Plays API listening on :${port}`);
+  startPaymentReconciler();
 });

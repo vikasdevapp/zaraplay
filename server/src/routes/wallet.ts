@@ -37,6 +37,8 @@ walletRouter.get("/payment-options", (_req, res) => {
   });
 });
 
+const MAX_OPEN_GATEWAY_DEPOSITS = 3;
+
 const depositSchema = z.object({
   amount: z.number().positive().max(1000000),
   wayCode: z.string().max(30).optional(),
@@ -70,6 +72,23 @@ walletRouter.post("/deposit", async (req: AuthedRequest, res) => {
   if (gateway.payEnabled) {
     const method = wayCode || gateway.payWayCodes[0];
     if (!gateway.payWayCodes.includes(method)) return res.status(400).json({ error: "Unsupported payment method." });
+
+    // Each order counts against the merchant's test/daily limits, so unpaid ones are capped;
+    // the user can resume an open one from their transaction list instead.
+    const openOrders = await prisma.transaction.count({
+      where: {
+        userId: req.userId!,
+        type: "DEPOSIT",
+        status: "PENDING",
+        gatewayProvider: PROVIDER,
+        createdAt: { gt: new Date(Date.now() - gateway.orderExpireSeconds * 1000) },
+      },
+    });
+    if (openOrders >= MAX_OPEN_GATEWAY_DEPOSITS) {
+      return res.status(429).json({
+        error: "You have unfinished payments. Continue one from your transactions below, or wait for it to expire.",
+      });
+    }
 
     // The transaction id doubles as the gateway's mchOrderNo, so callbacks map straight back.
     const transaction = await prisma.transaction.create({

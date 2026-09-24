@@ -20,6 +20,24 @@ interface Transaction {
   createdAt: string;
   payoutAmount?: string | null;
   forfeitedAmount?: string | null;
+  gatewayProvider?: string | null;
+  meta?: { cashierUrl?: string; expireTimestamp?: number; payout?: { wayCode: string; account: string } } | null;
+}
+
+// Stable per-browser id the gateway uses for fraud checks and payment success rate. Falls
+// back to a fresh id each time if storage is unavailable (private mode, blocked storage).
+function getDeviceId() {
+  try {
+    let id = localStorage.getItem("zp_device_id");
+    if (!id) {
+      // randomUUID needs a secure context (HTTPS/localhost); the site may be served over plain HTTP.
+      id = typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+      localStorage.setItem("zp_device_id", id);
+    }
+    return id;
+  } catch {
+    return undefined;
+  }
 }
 
 interface PaymentOptions {
@@ -106,7 +124,7 @@ function WalletContent() {
     try {
       const res = await api<{ bonus: { kind: string; percent: number; amount: number }; cashierUrl?: string }>("/api/wallet/deposit", {
         method: "POST",
-        body: JSON.stringify({ amount: Number(depositAmount), wayCode: depositMethod || undefined }),
+        body: JSON.stringify({ amount: Number(depositAmount), wayCode: depositMethod || undefined, deviceId: getDeviceId() }),
       });
       if (res.cashierUrl) {
         window.location.href = res.cashierUrl;
@@ -122,6 +140,17 @@ function WalletContent() {
       setMessage({ type: "error", text: err instanceof ApiError ? err.message : "Deposit failed." });
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function refreshDeposit(id: string) {
+    try {
+      const { transaction } = await api<{ transaction: Transaction }>(`/api/wallet/deposit/${id}/refresh`, { method: "POST" });
+      if (transaction.status === "COMPLETED") setMessage({ type: "success", text: "Payment received — your balance has been updated." });
+      else if (transaction.status === "PENDING") setMessage({ type: "success", text: "Still waiting for payment confirmation." });
+      await load();
+    } catch {
+      setMessage({ type: "error", text: "Could not check the payment right now." });
     }
   }
 
@@ -256,6 +285,25 @@ function WalletContent() {
                     )}
                   </p>
                   <p className="text-muted text-xs">{new Date(t.createdAt).toLocaleString()}</p>
+                  {t.type === "CASHOUT" && t.meta?.payout && (
+                    <p className="text-muted text-xs">
+                      To {METHOD_LABELS[t.meta.payout.wayCode] || t.meta.payout.wayCode} · {t.meta.payout.account}
+                    </p>
+                  )}
+                  {t.type === "DEPOSIT" &&
+                    t.status === "PENDING" &&
+                    t.gatewayProvider &&
+                    t.meta?.cashierUrl &&
+                    (t.meta.expireTimestamp ?? 0) > Date.now() && (
+                      <p className="text-xs mt-0.5 flex gap-3">
+                        <a href={t.meta.cashierUrl} className="text-primary font-medium">
+                          Continue payment →
+                        </a>
+                        <button type="button" onClick={() => refreshDeposit(t.id)} className="text-muted underline">
+                          Refresh
+                        </button>
+                      </p>
+                    )}
                   {t.type === "CASHOUT" && Number(t.forfeitedAmount ?? 0) > 0 && (
                     <p className="text-muted text-xs">
                       Payout ${Number(t.payoutAmount).toFixed(2)} · forfeited ${Number(t.forfeitedAmount).toFixed(2)}

@@ -100,6 +100,24 @@ model Transaction {
   gatewayProvider String?
   gatewayOrderNo  String?
   createdAt       DateTime           @default(now())
+
+  @@index([gatewayProvider, status])
+}
+
+// Raw record of every payment gateway callback (accepted or not), kept for disputes and
+// debugging missed/duplicate notifications.
+model GatewayEvent {
+  id             String   @id @default(cuid())
+  provider       String
+  kind           String
+  mchOrderNo     String?
+  ip             String?
+  signatureValid Boolean
+  payload        Json
+  result         String
+  createdAt      DateTime @default(now())
+
+  @@index([mchOrderNo])
 }
 
 model Game {

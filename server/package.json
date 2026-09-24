@@ -7,7 +7,8 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
-    "seed": "tsx src/seed.ts"
+    "seed": "tsx src/seed.ts",
+    "mock:gateway": "tsx scripts/mock-gateway.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.19.1",

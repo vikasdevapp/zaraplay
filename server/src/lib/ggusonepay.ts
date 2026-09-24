@@ -18,6 +18,8 @@ const config = {
   notifyIps: list(process.env.GGUSONEPAY_NOTIFY_IPS || ""),
   // Test merchants only: "success"/"fail" in extParam makes the gateway auto-callback after ~1 min.
   sandboxAutoResult: process.env.GGUSONEPAY_SANDBOX_AUTO_RESULT || "",
+  // Unpaid pay orders expire after this many seconds (gateway allows 1800–86400).
+  orderExpireSeconds: Math.min(86400, Math.max(1800, Number(process.env.GGUSONEPAY_ORDER_EXPIRE_SECONDS) || 1800)),
 };
 
 function list(value: string) {
@@ -33,6 +35,7 @@ export const gateway = {
   },
   payWayCodes: config.payWayCodes,
   transferWayCodes: config.transferWayCodes,
+  orderExpireSeconds: config.orderExpireSeconds,
 };
 
 // Order states shared by pay and transfer orders.
@@ -44,6 +47,7 @@ export const ORDER_STATE = {
   CANCELLED: 4,
   REFUNDED: 5,
   CLOSED: 6,
+  DISPUTED: 7,
 } as const;
 
 export const FINAL_FAILURE_STATES: number[] = [ORDER_STATE.FAILED, ORDER_STATE.CANCELLED, ORDER_STATE.CLOSED];
@@ -181,6 +185,7 @@ export function createPayOrder(input: {
     clientIp: input.clientIp,
     notifyUrl: `${config.apiPublicUrl}/api/payments/ggusonepay/notify/pay`,
     returnUrl: config.webPublicUrl ? `${config.webPublicUrl}/wallet` : undefined,
+    expiredTime: config.orderExpireSeconds,
     extParam: config.sandboxAutoResult || undefined,
     wayParam: { clientId: input.userId, deviceId: input.deviceId },
   });

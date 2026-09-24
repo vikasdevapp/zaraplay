@@ -16,11 +16,28 @@ interface Cashout {
   createdAt: string;
   gatewayProvider: string | null;
   gatewayOrderNo: string | null;
-  meta: { payout?: { wayCode: string; account: string } } | null;
+  meta: {
+    payout?: { wayCode: string; account: string };
+    gatewayAlert?: string;
+    reviewCode?: string;
+    errMsg?: string;
+  } | null;
   user: { id: string; fullName: string; username: string; email: string };
 }
 
 const TABS = ["PENDING", "COMPLETED", "REJECTED"] as const;
+
+// Payout review codes from the gateway's transfer callback (11 = all successful).
+const REVIEW_CODES: Record<string, string> = {
+  "12": "partially paid — create a new payout for the rest",
+  "13": "partially paid — tag hit its limit, use a different tag for the rest",
+  "21": "tag limit reached (Cash App risk control)",
+  "22": "account too new (Cash App risk control)",
+  "23": "account flagged as risky (Cash App risk control)",
+  "24": "tag not found or web link access disabled",
+  "25": "incorrect tag",
+  "26": "tag is blocked",
+};
 
 export default function AdminCashoutsPage() {
   const api = useApi();
@@ -119,6 +136,16 @@ export default function AdminCashoutsPage() {
                   Sent via gateway{c.gatewayOrderNo ? ` · ${c.gatewayOrderNo}` : ""}
                 </p>
               )}
+              {c.meta?.gatewayAlert && (
+                <p className="text-xs font-semibold text-red-400">⚠ Gateway reports {c.meta.gatewayAlert.toLowerCase()}</p>
+              )}
+              {c.meta?.reviewCode && c.meta.reviewCode !== "11" && (
+                <p className="text-xs text-yellow-400">
+                  Gateway review {c.meta.reviewCode}
+                  {REVIEW_CODES[c.meta.reviewCode] ? `: ${REVIEW_CODES[c.meta.reviewCode]}` : ""}
+                </p>
+              )}
+              {c.meta?.errMsg && <p className="text-xs text-red-400">Gateway: {c.meta.errMsg}</p>}
               {c.adminNote && <p className="text-xs text-muted">Note: {c.adminNote}</p>}
             </div>
             <div className="flex items-center gap-4">
@@ -128,7 +155,7 @@ export default function AdminCashoutsPage() {
                   <p className="text-xs text-muted">forfeited ${Number(c.forfeitedAmount).toFixed(2)}</p>
                 )}
               </div>
-              {tab === "PENDING" && c.gatewayProvider && (
+              {(tab === "PENDING" || tab === "COMPLETED") && c.gatewayProvider && (
                 <button onClick={() => sync(c.id)} disabled={busyId === c.id} className="btn-ghost text-sm py-2 px-3">
                   Check status
                 </button>
