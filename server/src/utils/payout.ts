@@ -11,7 +11,7 @@ export async function completeCashout(transactionId: string, extraMeta?: Prisma.
   if (!transaction || transaction.type !== "CASHOUT" || transaction.status !== "PENDING") return null;
   const res = await prisma.transaction.updateMany({
     where: { id: transactionId, status: "PENDING" },
-    data: { status: "COMPLETED", ...mergedMeta(transaction.meta, extraMeta) },
+    data: { status: "COMPLETED", payoutSecret: null, ...mergedMeta(transaction.meta, extraMeta) },
   });
   return res.count ? prisma.transaction.findUnique({ where: { id: transactionId } }) : null;
 }
@@ -30,7 +30,7 @@ export async function refundCashout(
 
     const claimed = await tx.transaction.updateMany({
       where: { id: transactionId, status: "PENDING", ...(opts.onlyIfUnclaimed ? { gatewayProvider: null } : {}) },
-      data: { status: "REJECTED", adminNote: note, ...mergedMeta(transaction.meta, extraMeta) },
+      data: { status: "REJECTED", adminNote: note, payoutSecret: null, ...mergedMeta(transaction.meta, extraMeta) },
     });
     if (claimed.count === 0) return null;
 

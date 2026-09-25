@@ -1,5 +1,7 @@
 generator client {
   provider      = "prisma-client-js"
+  // omitApi: lets lib/prisma.ts hide Transaction.payoutSecret from every query by default.
+  previewFeatures = ["omitApi"]
   // "native" covers local dev (Windows/Mac/glibc Linux); the musl target is needed for the
   // Alpine-based production Docker image, which ships OpenSSL 3.x, not the 1.1.x Prisma
   // defaults to on musl without this.
@@ -99,6 +101,9 @@ model Transaction {
   // cashout can't be submitted for payout twice); gatewayOrderNo is the gateway's own id.
   gatewayProvider String?
   gatewayOrderNo  String?
+  // CASHOUT to card only: the card number, AES-GCM sealed (lib/secretBox). Never returned by
+  // the API, and wiped once the payout is handed to the gateway or the request is rejected.
+  payoutSecret    String?
   createdAt       DateTime           @default(now())
 
   @@index([gatewayProvider, status])

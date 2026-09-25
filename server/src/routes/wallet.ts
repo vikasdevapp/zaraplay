@@ -5,9 +5,10 @@ import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { calcDepositBonus } from "../utils/bonus";
 import { evaluateCashout } from "../utils/cashout";
 import { getPlatformSettings } from "../lib/settings";
-import { createPayOrder, gateway, GatewayError, publicIpv4, TRANSFER_ACCOUNT_FIELD } from "../lib/ggusonepay";
+import { createPayOrder, gateway, GatewayError, publicIpv4 } from "../lib/ggusonepay";
 import { PROVIDER, syncDeposit } from "../lib/paymentSync";
 import { rejectDeposit } from "../utils/deposit";
+import { sealSecret } from "../lib/secretBox";
 
 export const walletRouter = Router();
 walletRouter.use(requireAuth);
@@ -32,7 +33,7 @@ walletRouter.get("/payment-options", (_req, res) => {
     deposit: { gateway: gateway.payEnabled, methods: gateway.payEnabled ? gateway.payWayCodes : [] },
     cashout: {
       gateway: gateway.transferEnabled,
-      methods: gateway.transferEnabled ? gateway.transferWayCodes.filter((w) => TRANSFER_ACCOUNT_FIELD[w]) : [],
+      methods: gateway.transferEnabled ? gateway.transferWayCodes : [],
     },
   });
 });
@@ -166,9 +167,43 @@ const cashoutSchema = z.object({
   amount: z.number().positive(),
   fromFreePlay: z.boolean().optional().default(false),
   payout: z
-    .object({ wayCode: z.string().max(30), account: z.string().trim().min(2).max(100) })
+    .object({
+      wayCode: z.string().max(30),
+      // Handle-based methods ($Cashtag, $ChimeSign, email…)
+      account: z.string().trim().min(2).max(100).optional(),
+      // Card payouts
+      cardNumber: z.string().max(30).optional(),
+      cardExpiry: z.string().max(10).optional(),
+    })
     .optional(),
 });
+
+// Luhn checksum: catches typos in card numbers before anything is sent anywhere.
+function luhnValid(digits: string) {
+  let sum = 0;
+  for (let i = 0; i < digits.length; i++) {
+    let d = Number(digits[digits.length - 1 - i]);
+    if (i % 2 === 1) {
+      d *= 2;
+      if (d > 9) d -= 9;
+    }
+    sum += d;
+  }
+  return sum % 10 === 0;
+}
+
+// Accepts MM/YY or MM/YYYY; returns the gateway's MM/YYYY, or null if invalid or expired.
+function normalizeCardExpiry(input: string) {
+  const m = input.trim().match(/^(\d{1,2})\s*\/\s*(\d{2}|\d{4})$/);
+  if (!m) return null;
+  const month = Number(m[1]);
+  const year = m[2].length === 2 ? 2000 + Number(m[2]) : Number(m[2]);
+  if (month < 1 || month > 12) return null;
+  const now = new Date();
+  if (year < now.getFullYear() || (year === now.getFullYear() && month < now.getMonth() + 1)) return null;
+  return `${String(month).padStart(2, "0")}/${year}`;
+}
+
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // Mirrors the gateway's wayParam rules so bad details fail here, not at payout time.
@@ -193,11 +228,25 @@ walletRouter.post("/cashout", async (req: AuthedRequest, res) => {
   if (!parsed.success) return res.status(400).json({ error: "Invalid cashout amount." });
   const { amount, fromFreePlay, payout } = parsed.data;
 
+  // What gets stored: display-safe details in meta, and (card only) the sealed card number.
+  let payoutMeta: { wayCode: string; account: string; cardValid?: string } | null = null;
+  let payoutSecret: string | null = null;
   if (gateway.transferEnabled) {
     if (!payout) return res.status(400).json({ error: "Choose where to receive your payout." });
     if (!gateway.transferWayCodes.includes(payout.wayCode)) return res.status(400).json({ error: "Unsupported payout method." });
-    const accountError = payoutAccountError(payout.wayCode, payout.account);
-    if (accountError) return res.status(400).json({ error: accountError });
+    if (payout.wayCode === "card") {
+      const digits = (payout.cardNumber || "").replace(/[\s-]/g, "");
+      if (!/^\d{12,19}$/.test(digits) || !luhnValid(digits)) return res.status(400).json({ error: "Enter a valid card number." });
+      const cardValid = normalizeCardExpiry(payout.cardExpiry || "");
+      if (!cardValid) return res.status(400).json({ error: "Enter a valid, unexpired card expiry date (MM/YY)." });
+      payoutMeta = { wayCode: "card", account: `•••• ${digits.slice(-4)}`, cardValid };
+      payoutSecret = sealSecret(digits);
+    } else {
+      const account = payout.account || "";
+      const accountError = payoutAccountError(payout.wayCode, account);
+      if (accountError) return res.status(400).json({ error: accountError });
+      payoutMeta = { wayCode: payout.wayCode, account };
+    }
   }
 
   const wallet = await prisma.wallet.findUnique({ where: { userId: req.userId! } });
@@ -232,7 +281,8 @@ walletRouter.post("/cashout", async (req: AuthedRequest, res) => {
         status: "PENDING",
         payoutAmount: evaluation.payout,
         forfeitedAmount: evaluation.forfeited,
-        meta: gateway.transferEnabled && payout ? { fromFreePlay, payout } : { fromFreePlay },
+        meta: payoutMeta ? { fromFreePlay, payout: payoutMeta } : { fromFreePlay },
+        payoutSecret,
       },
     });
     return { wallet: w, transaction };

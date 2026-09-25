@@ -58,6 +58,13 @@ const METHOD_LABELS: Record<string, string> = {
   venmo: "Venmo",
 };
 
+// Cashout method names shown to users (the deposit list uses METHOD_LABELS).
+const PAYOUT_LABELS: Record<string, string> = {
+  card: "Debit card (instant transfer)",
+  ecashapp: "Cash App ($Cashtag)",
+  chime: "Chime ($ChimeSign)",
+};
+
 const PAYOUT_PLACEHOLDER: Record<string, string> = {
   ecashapp: "$Cashtag",
   chime: "$ChimeSign",
@@ -74,6 +81,8 @@ function WalletContent() {
   const [depositMethod, setDepositMethod] = useState("");
   const [payoutMethod, setPayoutMethod] = useState("");
   const [payoutAccount, setPayoutAccount] = useState("");
+  const [cardNumber, setCardNumber] = useState("");
+  const [cardExpiry, setCardExpiry] = useState("");
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [depositAmount, setDepositAmount] = useState("");
@@ -163,7 +172,11 @@ function WalletContent() {
         method: "POST",
         body: JSON.stringify({
           amount: Number(cashoutAmount),
-          payout: options?.cashout.gateway ? { wayCode: payoutMethod, account: payoutAccount } : undefined,
+          payout: !options?.cashout.gateway
+            ? undefined
+            : payoutMethod === "card"
+              ? { wayCode: "card", cardNumber, cardExpiry }
+              : { wayCode: payoutMethod, account: payoutAccount },
         }),
       });
       setMessage({
@@ -171,6 +184,9 @@ function WalletContent() {
         text: `Cashout requested: $${res.payout.toFixed(2)}${res.note ? ` — ${res.note}` : ""}`,
       });
       setCashoutAmount("");
+      // Don't keep card details around in page state after they've been submitted.
+      setCardNumber("");
+      setCardExpiry("");
       await load();
     } catch (err) {
       setMessage({ type: "error", text: err instanceof ApiError ? err.message : "Cashout failed." });
@@ -238,17 +254,45 @@ function WalletContent() {
                 <select className="input" value={payoutMethod} onChange={(e) => setPayoutMethod(e.target.value)}>
                   {options.cashout.methods.map((m) => (
                     <option key={m} value={m}>
-                      {METHOD_LABELS[m] || m}
+                      {PAYOUT_LABELS[m] || METHOD_LABELS[m] || m}
                     </option>
                   ))}
                 </select>
-                <input
-                  className="input"
-                  placeholder={PAYOUT_PLACEHOLDER[payoutMethod] || "Payout account"}
-                  value={payoutAccount}
-                  onChange={(e) => setPayoutAccount(e.target.value)}
-                  required
-                />
+                {payoutMethod === "card" ? (
+                  <div className="grid grid-cols-3 gap-2">
+                    <input
+                      className="input col-span-2"
+                      inputMode="numeric"
+                      autoComplete="cc-number"
+                      placeholder="Card number"
+                      maxLength={23}
+                      value={cardNumber}
+                      onChange={(e) => setCardNumber(e.target.value.replace(/[^\d ]/g, ""))}
+                      required
+                    />
+                    <input
+                      className="input"
+                      inputMode="numeric"
+                      autoComplete="cc-exp"
+                      placeholder="MM/YY"
+                      maxLength={7}
+                      value={cardExpiry}
+                      onChange={(e) => setCardExpiry(e.target.value.replace(/[^\d/]/g, ""))}
+                      required
+                    />
+                  </div>
+                ) : (
+                  <input
+                    className="input"
+                    placeholder={PAYOUT_PLACEHOLDER[payoutMethod] || "Payout account"}
+                    value={payoutAccount}
+                    onChange={(e) => setPayoutAccount(e.target.value)}
+                    required
+                  />
+                )}
+                {payoutMethod === "card" && (
+                  <p className="text-xs text-muted">Debit card only. We never ask for your CVV or PIN.</p>
+                )}
               </>
             )}
             <button type="submit" className="btn-gold w-full" disabled={busy === "cashout"}>

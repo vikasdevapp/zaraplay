@@ -3,8 +3,9 @@ import { z } from "zod";
 import { prisma } from "../../lib/prisma";
 import { AuthedRequest } from "../../middleware/auth";
 import { logAudit } from "../../lib/audit";
-import { createTransfer, FINAL_FAILURE_STATES, gateway, GatewayError, ORDER_STATE } from "../../lib/ggusonepay";
+import { createTransfer, FINAL_FAILURE_STATES, gateway, GatewayError, ORDER_STATE, TRANSFER_ACCOUNT_FIELD } from "../../lib/ggusonepay";
 import { PROVIDER, syncCashout } from "../../lib/paymentSync";
+import { openSecret } from "../../lib/secretBox";
 import { completeCashout, refundCashout } from "../../utils/payout";
 
 export const adminCashoutsRouter = Router();
@@ -24,12 +25,13 @@ adminCashoutsRouter.get("/", async (req, res) => {
 });
 
 adminCashoutsRouter.post("/:id/approve", async (req: AuthedRequest, res) => {
-  const transaction = await prisma.transaction.findUnique({ where: { id: req.params.id } });
+  // The only query that loads the sealed card number (omitted everywhere else).
+  const transaction = await prisma.transaction.findUnique({ where: { id: req.params.id }, omit: { payoutSecret: false } });
   if (!transaction || transaction.type !== "CASHOUT") return res.status(404).json({ error: "Cashout request not found." });
   if (transaction.status !== "PENDING") return res.status(409).json({ error: `This request is already ${transaction.status.toLowerCase()}.` });
   if (transaction.gatewayProvider) return res.status(409).json({ error: "This payout was already sent to the payment gateway." });
 
-  const payout = (transaction.meta as { payout?: { wayCode: string; account: string } } | null)?.payout;
+  const payout = (transaction.meta as { payout?: { wayCode: string; account: string; cardValid?: string } } | null)?.payout;
   const auditMeta = { userId: transaction.userId, amount: transaction.amount, payout };
 
   // No payout details (manual request, or gateway not configured): the admin paid it by hand.
@@ -38,6 +40,23 @@ adminCashoutsRouter.post("/:id/approve", async (req: AuthedRequest, res) => {
     if (!updated) return res.status(409).json({ error: "This request was already processed." });
     await logAudit(req.userId!, "CASHOUT_APPROVED", { targetType: "Transaction", targetId: transaction.id, meta: auditMeta });
     return res.json({ transaction: updated });
+  }
+
+  // Build the gateway's wayParam before claiming, so a bad/missing card record fails cleanly.
+  let wayParam: Record<string, string>;
+  if (payout.wayCode === "card") {
+    if (!transaction.payoutSecret || !payout.cardValid) {
+      return res.status(400).json({ error: "Card details are missing for this request; reject it and ask the user to resubmit." });
+    }
+    try {
+      wayParam = { cardNumber: openSecret(transaction.payoutSecret), cardValid: payout.cardValid };
+    } catch {
+      return res.status(500).json({ error: "Could not decrypt the card details (check PAYOUT_ENCRYPTION_KEY)." });
+    }
+  } else {
+    const field = TRANSFER_ACCOUNT_FIELD[payout.wayCode];
+    if (!field) return res.status(400).json({ error: `Unsupported payout method: ${payout.wayCode}` });
+    wayParam = { [field]: payout.account };
   }
 
   // Claim the cashout for the gateway before calling it, so a double click or a concurrent
@@ -53,11 +72,12 @@ adminCashoutsRouter.post("/:id/approve", async (req: AuthedRequest, res) => {
       mchOrderNo: transaction.id,
       amount: Number(transaction.payoutAmount ?? transaction.amount),
       wayCode: payout.wayCode,
-      account: payout.account,
+      wayParam,
     });
     await prisma.transaction.update({
       where: { id: transaction.id },
-      data: { gatewayOrderNo: order.transferOrderNo },
+      // The card number has done its job once the gateway holds the transfer.
+      data: { gatewayOrderNo: order.transferOrderNo, payoutSecret: null },
     });
     await logAudit(req.userId!, "CASHOUT_APPROVED", {
       targetType: "Transaction",

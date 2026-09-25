@@ -7,6 +7,9 @@ import { sendPushToUser } from "./webpush";
 
 export const PROVIDER = "ggusonepay";
 
+// Rows as the shared client returns them (payoutSecret is omitted globally).
+type TxRow = Omit<Transaction, "payoutSecret">;
+
 // Every state change is driven by the gateway's query API, never by callback fields alone:
 // the callback only tells us *which* order to look at.
 
@@ -18,7 +21,7 @@ function notify(userId: string, title: string, body: string) {
 
 // A refund or dispute on money we already credited/paid can't be undone automatically (the
 // user may have spent it), so it's flagged for an admin instead.
-async function flagAlert(transaction: Transaction, alert: "REFUNDED" | "DISPUTED", gatewayMeta: Prisma.JsonObject) {
+async function flagAlert(transaction: TxRow, alert: "REFUNDED" | "DISPUTED", gatewayMeta: Prisma.JsonObject) {
   const meta = (transaction.meta as Prisma.JsonObject) || {};
   if (meta.gatewayAlert === alert) return;
   await prisma.transaction.update({
@@ -31,7 +34,7 @@ async function flagAlert(transaction: Transaction, alert: "REFUNDED" | "DISPUTED
   console.warn(`[ggusonepay] ${transaction.type} ${transaction.id} ${alert} after completion`);
 }
 
-export async function syncDeposit(transaction: Transaction, opts: { closeIfExpired?: boolean } = {}) {
+export async function syncDeposit(transaction: TxRow, opts: { closeIfExpired?: boolean } = {}) {
   if (transaction.type !== "DEPOSIT" || transaction.gatewayProvider !== PROVIDER || transaction.status === "REJECTED") {
     return transaction;
   }
@@ -81,7 +84,7 @@ export async function syncDeposit(transaction: Transaction, opts: { closeIfExpir
   return (await prisma.transaction.findUnique({ where: { id: transaction.id } }))!;
 }
 
-export async function syncCashout(transaction: Transaction, callbackMeta: Prisma.JsonObject = {}) {
+export async function syncCashout(transaction: TxRow, callbackMeta: Prisma.JsonObject = {}) {
   if (transaction.type !== "CASHOUT" || transaction.gatewayProvider !== PROVIDER || transaction.status === "REJECTED") {
     return transaction;
   }

@@ -17,7 +17,7 @@ interface Cashout {
   gatewayProvider: string | null;
   gatewayOrderNo: string | null;
   meta: {
-    payout?: { wayCode: string; account: string };
+    payout?: { wayCode: string; account: string; cardValid?: string };
     gatewayAlert?: string;
     reviewCode?: string;
     errMsg?: string;
@@ -129,6 +129,7 @@ export default function AdminCashoutsPage() {
               {c.meta?.payout && (
                 <p className="text-xs">
                   Pay to: <span className="font-medium">{c.meta.payout.wayCode}</span> · {c.meta.payout.account}
+                  {c.meta.payout.cardValid && ` · exp ${c.meta.payout.cardValid}`}
                 </p>
               )}
               {c.gatewayProvider && (

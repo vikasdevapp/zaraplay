@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { isSecretBoxConfigured } from "./secretBox";
 
 // GGUSOnePay gateway client: pay-in (deposits) via /api/pay/*, payouts via /api/transfer/*.
 // Everything is driven by env so the same build runs against the test merchant and production.
@@ -34,7 +35,10 @@ export const gateway = {
     return !!(config.mchNo && config.apiKey && config.apiPublicUrl && config.transferWayCodes.length);
   },
   payWayCodes: config.payWayCodes,
-  transferWayCodes: config.transferWayCodes,
+  // Only methods we can actually pay out; card also needs the encryption key for card numbers.
+  get transferWayCodes() {
+    return config.transferWayCodes.filter((w) => TRANSFER_METHODS.includes(w) && (w !== "card" || isSecretBoxConfigured()));
+  },
   orderExpireSeconds: config.orderExpireSeconds,
 };
 
@@ -205,8 +209,8 @@ export function queryPayOrder(mchOrderNo: string) {
   return call<PayOrderDetail>("/api/pay/query", { mchOrderNo });
 }
 
-// Which wayParam field each payout method needs; only methods that take a handle/email are
-// supported so we never store card or bank account numbers.
+// wayParam field holding the account handle for each handle-based payout method. Card payouts
+// send { cardNumber, cardValid } instead (see admin cashout approval).
 export const TRANSFER_ACCOUNT_FIELD: Record<string, string> = {
   ecashapp: "cashtag",
   paypal: "email",
@@ -214,6 +218,7 @@ export const TRANSFER_ACCOUNT_FIELD: Record<string, string> = {
   zelle: "zelleSign",
   chime: "chimeSign",
 };
+export const TRANSFER_METHODS = [...Object.keys(TRANSFER_ACCOUNT_FIELD), "card"];
 
 export interface TransferOrder {
   transferOrderNo: string;
@@ -223,9 +228,8 @@ export interface TransferOrder {
   errMsg?: string | null;
 }
 
-export function createTransfer(input: { mchOrderNo: string; amount: number; wayCode: string; account: string }) {
-  const field = TRANSFER_ACCOUNT_FIELD[input.wayCode];
-  if (!field) throw new GatewayError("UNSUPPORTED", `Unsupported payout method: ${input.wayCode}`);
+export function createTransfer(input: { mchOrderNo: string; amount: number; wayCode: string; wayParam: Record<string, string> }) {
+  if (!TRANSFER_METHODS.includes(input.wayCode)) throw new GatewayError("UNSUPPORTED", `Unsupported payout method: ${input.wayCode}`);
   return call<TransferOrder>("/api/transfer/create", {
     mchOrderNo: input.mchOrderNo,
     amount: toCents(input.amount),
@@ -234,7 +238,7 @@ export function createTransfer(input: { mchOrderNo: string; amount: number; wayC
     reason: "Withdrawal",
     notifyUrl: `${config.apiPublicUrl}/api/payments/ggusonepay/notify/transfer`,
     extParam: config.sandboxAutoResult || undefined,
-    wayParam: { [field]: input.account },
+    wayParam: input.wayParam,
   });
 }
 
