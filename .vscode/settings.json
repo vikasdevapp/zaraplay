@@ -1,0 +1,5 @@
+{
+  // The project uses Prisma 5 (server/package.json); without this the Prisma extension checks
+  // schema.prisma against Prisma 7 rules and flags `url = env("DATABASE_URL")` as an error.
+  "prisma.pinToPrisma6": true
+}

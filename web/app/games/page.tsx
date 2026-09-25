@@ -11,6 +11,19 @@ interface Game {
   name: string;
   slug: string;
   imageUrl: string | null;
+  // Set by admins when adding/editing a game; opened by "Play Now".
+  playUrl: string | null;
+}
+
+// Only plain web links are opened, never javascript: or other schemes.
+function safePlayUrl(url: string | null) {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" || u.protocol === "http:" ? u.toString() : null;
+  } catch {
+    return null;
+  }
 }
 
 function GameThumb({ game, className }: { game: Game; className?: string }) {
@@ -140,12 +153,23 @@ export default function GamesPage() {
                 <button onClick={() => resetPassword(ug.id)} className="btn-ghost text-sm py-2">
                   🔄 Reset Password
                 </button>
-                <button
-                  onClick={() => setPlayNote("Reach out to Support for the play link for this game.")}
-                  className="btn-primary text-sm py-2"
-                >
-                  🎮 Play Now
-                </button>
+                {safePlayUrl(ug.game.playUrl) ? (
+                  <a
+                    href={safePlayUrl(ug.game.playUrl)!}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn-primary text-sm py-2 text-center"
+                  >
+                    🎮 Play Now
+                  </a>
+                ) : (
+                  <button
+                    onClick={() => setPlayNote("Reach out to Support for the play link for this game.")}
+                    className="btn-primary text-sm py-2"
+                  >
+                    🎮 Play Now
+                  </button>
+                )}
               </div>
             </div>
           ))}

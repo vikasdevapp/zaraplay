@@ -25,9 +25,22 @@ function formatCountdown(seconds: number) {
   return `${h}h ${m}m`;
 }
 
+const SIZE = 200;
+const C = SIZE / 2;
+const R = C - 4;
+const SPIN_MS = 4500;
+
+// Point on the rim at `deg` degrees clockwise from 12 o'clock.
+function rimXY(deg: number, r = R) {
+  const rad = (deg * Math.PI) / 180;
+  return [C + r * Math.sin(rad), C - r * Math.cos(rad)] as const;
+}
+const rim = (deg: number) => rimXY(deg).join(",");
+
 export default function RouletteWheel({ onWin }: { onWin?: () => void }) {
   const api = useApi();
   const [status, setStatus] = useState<Status | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [rotation, setRotation] = useState(0);
   const [spinning, setSpinning] = useState(false);
   const [result, setResult] = useState<string | null>(null);
@@ -35,9 +48,10 @@ export default function RouletteWheel({ onWin }: { onWin?: () => void }) {
   const timeoutRef = useRef<ReturnType<typeof setTimeout>>();
 
   const load = useCallback(() => {
+    setLoadFailed(false);
     api<Status>("/api/roulette/status")
       .then(setStatus)
-      .catch(() => {});
+      .catch(() => setLoadFailed(true));
   }, [api]);
 
   useEffect(() => {
@@ -46,23 +60,8 @@ export default function RouletteWheel({ onWin }: { onWin?: () => void }) {
   }, [load]);
 
   const prizes = status?.prizes ?? [];
-  const totalWeight = prizes.reduce((sum, p) => sum + p.weight, 0);
-
-  // Segment boundaries (degrees, clockwise from top) in the same order the wheel is drawn.
-  const segments = (() => {
-    let cursor = 0;
-    return prizes.map((p) => {
-      const span = totalWeight > 0 ? (p.weight / totalWeight) * 360 : 0;
-      const seg = { prize: p, start: cursor, end: cursor + span };
-      cursor += span;
-      return seg;
-    });
-  })();
-
-  const gradient =
-    segments.length > 0
-      ? `conic-gradient(${segments.map((s) => `${s.prize.colorHex} ${s.start}deg ${s.end}deg`).join(", ")})`
-      : "#242424";
+  // Equal slices: the server picks the prize by weight; the wheel only shows where it landed.
+  const slice = prizes.length ? 360 / prizes.length : 360;
 
   async function handleSpin() {
     if (!status?.canSpin || spinning) return;
@@ -71,18 +70,21 @@ export default function RouletteWheel({ onWin }: { onWin?: () => void }) {
     setSpinning(true);
     try {
       const res = await api<{ prize: Prize }>("/api/roulette/spin", { method: "POST" });
-      const seg = segments.find((s) => s.prize.id === res.prize.id);
-      const targetAngle = seg ? seg.start + (seg.end - seg.start) / 2 : 0;
-      const extraSpins = 5;
-      const delta = extraSpins * 360 + ((360 - targetAngle) % 360);
-
-      setRotation((r) => r + delta);
+      const index = Math.max(0, prizes.findIndex((p) => p.id === res.prize.id));
+      // Land somewhere inside the slice (not dead centre), then bring it under the top pointer.
+      const jitter = (Math.random() - 0.5) * slice * 0.6;
+      const target = index * slice + slice / 2 + jitter;
+      setRotation((r) => {
+        const current = ((r % 360) + 360) % 360;
+        const toTarget = (((360 - target - current) % 360) + 360) % 360;
+        return r + 6 * 360 + toTarget;
+      });
       timeoutRef.current = setTimeout(() => {
         setSpinning(false);
-        setResult(`You won ${res.prize.label}!`);
+        setResult(Number(res.prize.amount) > 0 ? `🎉 You won ${res.prize.label}!` : `${res.prize.label} this time — try again tomorrow!`);
         load();
         onWin?.();
-      }, 4000);
+      }, SPIN_MS);
     } catch (err) {
       setSpinning(false);
       setError(err instanceof ApiError ? err.message : "Could not spin right now.");
@@ -90,39 +92,94 @@ export default function RouletteWheel({ onWin }: { onWin?: () => void }) {
     }
   }
 
-  if (!status) return null;
+  if (!status) {
+    return (
+      <div className="flex flex-col items-center gap-4 py-2">
+        <div className={`w-64 h-64 rounded-full border-4 border-border bg-surface2 ${loadFailed ? "" : "animate-pulse"}`} />
+        {loadFailed && (
+          <button onClick={load} className="text-sm text-primary-light underline">
+            Couldn&apos;t load the wheel — tap to retry
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  if (!prizes.length) {
+    return <p className="text-sm text-muted text-center py-6">The prize wheel is being set up. Check back soon!</p>;
+  }
+
+  const fontSize = prizes.length > 10 ? 7 : prizes.length > 6 ? 9 : 11;
 
   return (
     <div className="flex flex-col items-center gap-4">
-      <div className="relative w-56 h-56">
-        <div
-          className="absolute inset-0 rounded-full border-4 border-border shadow-lg transition-transform"
-          style={{ background: gradient, transform: `rotate(${rotation}deg)`, transitionDuration: "4000ms", transitionTimingFunction: "cubic-bezier(0.17, 0.67, 0.32, 1.01)" }}
+      <div className="relative w-64 h-64 sm:w-72 sm:h-72">
+        <svg
+          viewBox={`0 0 ${SIZE} ${SIZE}`}
+          className="absolute inset-0 w-full h-full drop-shadow-xl"
+          style={{
+            transform: `rotate(${rotation}deg)`,
+            transition: `transform ${SPIN_MS}ms cubic-bezier(0.17, 0.67, 0.2, 1)`,
+          }}
+          role="img"
+          aria-label={`Prize wheel: ${prizes.map((p) => p.label).join(", ")}`}
         >
-          {segments.map((s) => (
-            <div
-              key={s.prize.id}
-              className="absolute inset-0 flex justify-center"
-              style={{ transform: `rotate(${(s.start + s.end) / 2}deg)` }}
+          {prizes.length === 1 ? (
+            <circle cx={C} cy={C} r={R} fill={prizes[0].colorHex} />
+          ) : (
+            prizes.map((p, i) => {
+              const start = i * slice;
+              const end = start + slice;
+              return (
+                <path
+                  key={p.id}
+                  d={`M${C},${C} L${rim(start)} A${R},${R} 0 ${slice > 180 ? 1 : 0} 1 ${rim(end)} Z`}
+                  fill={p.colorHex}
+                  stroke="rgba(0,0,0,0.35)"
+                  strokeWidth="1"
+                />
+              );
+            })
+          )}
+          {prizes.map((p, i) => (
+            <text
+              key={p.id}
+              x={C}
+              y={C - R * 0.68}
+              transform={`rotate(${i * slice + slice / 2} ${C} ${C})`}
+              textAnchor="middle"
+              dominantBaseline="middle"
+              fill="#fff"
+              fontSize={fontSize}
+              fontWeight="700"
+              style={{ paintOrder: "stroke", stroke: "rgba(0,0,0,0.55)", strokeWidth: 2 }}
             >
-              <span className="text-[11px] font-bold text-white mt-3" style={{ textShadow: "0 1px 2px rgba(0,0,0,0.6)" }}>
-                {s.prize.label}
-              </span>
-            </div>
+              {p.label.length > 14 ? `${p.label.slice(0, 13)}…` : p.label}
+            </text>
           ))}
+          <circle cx={C} cy={C} r={R} fill="none" stroke="#f5f5f5" strokeWidth="4" />
+          {prizes.map((p, i) => (
+            <circle key={p.id} cx={rimXY(i * slice, R - 2)[0]} cy={rimXY(i * slice, R - 2)[1]} r="2" fill="#fff" />
+          ))}
+        </svg>
+        {/* Pointer */}
+        <div className="absolute -top-2 left-1/2 -translate-x-1/2 w-0 h-0 border-l-[12px] border-l-transparent border-r-[12px] border-r-transparent border-t-[22px] border-t-gold z-10 drop-shadow" />
+        {/* Hub */}
+        <div className="absolute inset-0 m-auto w-14 h-14 rounded-full bg-surface border-4 border-gold flex items-center justify-center text-xs font-extrabold z-10">
+          SPIN
         </div>
-        <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-0 h-0 border-l-[10px] border-l-transparent border-r-[10px] border-r-transparent border-t-[16px] border-t-gold z-10" />
-        <div className="absolute inset-0 m-auto w-10 h-10 rounded-full bg-surface border-2 border-border" />
       </div>
 
       <button onClick={handleSpin} disabled={!status.canSpin || spinning} className="btn-primary w-full max-w-xs">
         {spinning ? "Spinning…" : status.canSpin ? "🎡 Spin the Wheel" : `Next spin in ${formatCountdown(status.nextAvailableInSeconds)}`}
       </button>
 
-      {result && <p className="text-sm text-green-400 font-medium">{result}</p>}
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {result && <p className="text-sm text-green-400 font-medium text-center">{result}</p>}
+      {error && <p className="text-sm text-red-400 text-center">{error}</p>}
       {status.lastSpin && !result && (
-        <p className="text-xs text-muted">Last spin: {status.lastSpin.prizeLabel} on {new Date(status.lastSpin.createdAt).toLocaleDateString()}</p>
+        <p className="text-xs text-muted">
+          Last spin: {status.lastSpin.prizeLabel} on {new Date(status.lastSpin.createdAt).toLocaleDateString()}
+        </p>
       )}
     </div>
   );

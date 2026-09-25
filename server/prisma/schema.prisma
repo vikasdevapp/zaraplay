@@ -71,6 +71,7 @@ model User {
   auditLogs     AuditLog[]
   rouletteSpins RouletteSpin[]
   pushSubscriptions PushSubscription[]
+  payoutMethods PayoutMethod[]
 }
 
 model Wallet {
@@ -130,7 +131,7 @@ model Game {
   name      String
   slug      String     @unique
   imageUrl  String?
-  // Admin-facing reference link only — never surfaced as a live link on the customer site.
+  // Link opened by the "Play Now" button on the customer Games page.
   playUrl   String?
   isActive  Boolean    @default(true)
   sortOrder Int        @default(0)
@@ -258,6 +259,24 @@ model RouletteSpin {
   prizeLabel String
   amount     Decimal  @db.Decimal(12, 2)
   createdAt  DateTime @default(now())
+}
+
+// Saved withdrawal destinations. A cashout copies the chosen one onto its transaction
+// (meta.payout + payoutSecret), so editing or deleting a method never changes a pending request.
+model PayoutMethod {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  wayCode   String
+  // Display-safe: the handle itself ($Cashtag, email…), or "•••• 1234" for cards.
+  account   String
+  // Card only: expiry as MM/YYYY and the AES-GCM sealed card number (lib/secretBox), never
+  // returned by the API.
+  cardValid String?
+  secret    String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }
 
 model PushSubscription {

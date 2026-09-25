@@ -94,6 +94,12 @@ export default function RewardsPage() {
           <p className="text-sm text-muted">Complete tasks. Unlock rewards.</p>
         </div>
 
+        <div id="roulette" className="card scroll-mt-20">
+          <h2 className="font-bold mb-1">🎡 Spin to Win</h2>
+          <p className="text-sm text-muted mb-4">One free spin every day. Prizes land straight in your wallet.</p>
+          <RouletteWheel onWin={loadWallet} />
+        </div>
+
         <div className="card">
           <h2 className="font-bold mb-2">🏆 VIP Status</h2>
           {vip?.currentTier ? (
@@ -138,11 +144,6 @@ export default function RewardsPage() {
               <p className="text-xs text-muted">Earned from referrals</p>
             </div>
           </div>
-        </div>
-
-        <div className="card">
-          <h2 className="font-bold mb-3">🎡 Roulette</h2>
-          <RouletteWheel />
         </div>
 
         <div className="card">

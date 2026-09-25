@@ -3,7 +3,8 @@
 import { useEffect, useState, useCallback, FormEvent, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import AppShell from "@/components/AppShell";
-import { useApi } from "@/context/AuthContext";
+import CheckoutModal from "@/components/CheckoutModal";
+import { useApi, useAuth } from "@/context/AuthContext";
 import { ApiError } from "@/lib/api";
 
 interface Wallet {
@@ -65,6 +66,14 @@ const PAYOUT_LABELS: Record<string, string> = {
   chime: "Chime ($ChimeSign)",
 };
 
+interface SavedPayoutMethod {
+  id: string;
+  wayCode: string;
+  account: string;
+  cardValid?: string | null;
+  usable: boolean;
+}
+
 const PAYOUT_PLACEHOLDER: Record<string, string> = {
   ecashapp: "$Cashtag",
   chime: "$ChimeSign",
@@ -89,6 +98,15 @@ function WalletContent() {
   const [cashoutAmount, setCashoutAmount] = useState("");
   const [message, setMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
   const [busy, setBusy] = useState<"deposit" | "cashout" | null>(null);
+  const { user } = useAuth();
+  const [checkoutAmount, setCheckoutAmount] = useState<number | null>(null);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const closeCheckout = useCallback(() => setCheckoutAmount(null), []);
+  const [savedMethods, setSavedMethods] = useState<SavedPayoutMethod[]>([]);
+  const [selectedMethodId, setSelectedMethodId] = useState("");
+  const [addingMethod, setAddingMethod] = useState(false);
+  const [savingMethod, setSavingMethod] = useState(false);
+  const [methodError, setMethodError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const [w, t] = await Promise.all([
@@ -108,7 +126,51 @@ function WalletContent() {
         setPayoutMethod(o.cashout.methods[0] || "");
       })
       .catch(() => {});
+    api<{ methods: SavedPayoutMethod[] }>("/api/wallet/payout-methods")
+      .then(({ methods }) => {
+        setSavedMethods(methods);
+        setSelectedMethodId(methods.find((m) => m.usable)?.id || "");
+        setAddingMethod(methods.length === 0);
+      })
+      .catch(() => {});
   }, [load, api]);
+
+  async function saveMethod() {
+    setMethodError(null);
+    setSavingMethod(true);
+    try {
+      const { method } = await api<{ method: SavedPayoutMethod }>("/api/wallet/payout-methods", {
+        method: "POST",
+        body: JSON.stringify(
+          payoutMethod === "card" ? { wayCode: "card", cardNumber, cardExpiry } : { wayCode: payoutMethod, account: payoutAccount }
+        ),
+      });
+      setSavedMethods((list) => (list.some((m) => m.id === method.id) ? list : [...list, method]));
+      setSelectedMethodId(method.id);
+      setAddingMethod(false);
+      // Don't keep card details around in page state after they've been saved.
+      setPayoutAccount("");
+      setCardNumber("");
+      setCardExpiry("");
+    } catch (err) {
+      setMethodError(err instanceof ApiError ? err.message : "Could not save this payout method.");
+    } finally {
+      setSavingMethod(false);
+    }
+  }
+
+  async function deleteMethod(id: string) {
+    if (!window.confirm("Remove this payout method?")) return;
+    try {
+      await api(`/api/wallet/payout-methods/${id}`, { method: "DELETE" });
+      const rest = savedMethods.filter((m) => m.id !== id);
+      setSavedMethods(rest);
+      if (selectedMethodId === id) setSelectedMethodId(rest.find((m) => m.usable)?.id || "");
+      if (!rest.length) setAddingMethod(true);
+    } catch (err) {
+      setMethodError(err instanceof ApiError ? err.message : "Could not remove this payout method.");
+    }
+  }
 
   // Back from the gateway's cashier page (returnUrl = /wallet?status=…&mchOrderNo=…). The
   // query string is only a hint; the server re-checks the order with the gateway.
@@ -129,16 +191,18 @@ function WalletContent() {
   async function handleDeposit(e: FormEvent) {
     e.preventDefault();
     setMessage(null);
+    // Gateway deposits pick a method in the checkout sheet first; the order is created from there.
+    if (options?.deposit.gateway && options.deposit.methods.length) {
+      setCheckoutError(null);
+      setCheckoutAmount(Number(depositAmount));
+      return;
+    }
     setBusy("deposit");
     try {
-      const res = await api<{ bonus: { kind: string; percent: number; amount: number }; cashierUrl?: string }>("/api/wallet/deposit", {
+      const res = await api<{ bonus: { kind: string; percent: number; amount: number } }>("/api/wallet/deposit", {
         method: "POST",
-        body: JSON.stringify({ amount: Number(depositAmount), wayCode: depositMethod || undefined, deviceId: getDeviceId() }),
+        body: JSON.stringify({ amount: Number(depositAmount) }),
       });
-      if (res.cashierUrl) {
-        window.location.href = res.cashierUrl;
-        return;
-      }
       setMessage({
         type: "success",
         text: `Deposit requested — pending admin approval. Once approved you'll get +${res.bonus.percent}% bonus ($${res.bonus.amount.toFixed(2)}).`,
@@ -150,6 +214,27 @@ function WalletContent() {
     } finally {
       setBusy(null);
     }
+  }
+
+  async function payWithGateway(method: string) {
+    if (checkoutAmount === null) return;
+    setCheckoutError(null);
+    setBusy("deposit");
+    try {
+      const res = await api<{ cashierUrl?: string }>("/api/wallet/deposit", {
+        method: "POST",
+        body: JSON.stringify({ amount: checkoutAmount, wayCode: method, deviceId: getDeviceId() }),
+      });
+      if (res.cashierUrl) {
+        setDepositMethod(method);
+        window.location.href = res.cashierUrl;
+        return; // keep the sheet in its busy state while the browser navigates away
+      }
+      setCheckoutError("Could not open the payment page. Please try again.");
+    } catch (err) {
+      setCheckoutError(err instanceof ApiError ? err.message : "Could not start the payment. Please try again.");
+    }
+    setBusy(null);
   }
 
   async function refreshDeposit(id: string) {
@@ -166,17 +251,18 @@ function WalletContent() {
   async function handleCashout(e: FormEvent) {
     e.preventDefault();
     setMessage(null);
+    const needsMethod = !!options?.cashout.methods.length;
+    if (needsMethod && !selectedMethodId) {
+      setMessage({ type: "error", text: "Add or choose where to receive your payout." });
+      return;
+    }
     setBusy("cashout");
     try {
       const res = await api<{ payout: number; forfeited: number; note?: string }>("/api/wallet/cashout", {
         method: "POST",
         body: JSON.stringify({
           amount: Number(cashoutAmount),
-          payout: !options?.cashout.gateway
-            ? undefined
-            : payoutMethod === "card"
-              ? { wayCode: "card", cardNumber, cardExpiry }
-              : { wayCode: payoutMethod, account: payoutAccount },
+          payoutMethodId: needsMethod ? selectedMethodId : undefined,
         }),
       });
       setMessage({
@@ -184,9 +270,6 @@ function WalletContent() {
         text: `Cashout requested: $${res.payout.toFixed(2)}${res.note ? ` — ${res.note}` : ""}`,
       });
       setCashoutAmount("");
-      // Don't keep card details around in page state after they've been submitted.
-      setCardNumber("");
-      setCardExpiry("");
       await load();
     } catch (err) {
       setMessage({ type: "error", text: err instanceof ApiError ? err.message : "Cashout failed." });
@@ -217,17 +300,8 @@ function WalletContent() {
               onChange={(e) => setDepositAmount(e.target.value)}
               required
             />
-            {options?.deposit.gateway && options.deposit.methods.length > 1 && (
-              <select className="input" value={depositMethod} onChange={(e) => setDepositMethod(e.target.value)}>
-                {options.deposit.methods.map((m) => (
-                  <option key={m} value={m}>
-                    {METHOD_LABELS[m] || m}
-                  </option>
-                ))}
-              </select>
-            )}
             <button type="submit" className="btn-primary w-full" disabled={busy === "deposit"}>
-              {busy === "deposit" ? "Processing…" : options?.deposit.gateway ? "Continue to payment" : "Deposit"}
+              {busy === "deposit" ? "Processing…" : "Deposit"}
             </button>
             <p className="text-xs text-muted">
               First deposit: 100% bonus · Tuesdays: 50% bonus · Otherwise: 20% bonus.{" "}
@@ -249,51 +323,123 @@ function WalletContent() {
               onChange={(e) => setCashoutAmount(e.target.value)}
               required
             />
-            {options?.cashout.gateway && (
-              <>
-                <select className="input" value={payoutMethod} onChange={(e) => setPayoutMethod(e.target.value)}>
-                  {options.cashout.methods.map((m) => (
-                    <option key={m} value={m}>
-                      {PAYOUT_LABELS[m] || METHOD_LABELS[m] || m}
-                    </option>
-                  ))}
-                </select>
-                {payoutMethod === "card" ? (
-                  <div className="grid grid-cols-3 gap-2">
+            {!!options?.cashout.methods.length && (
+              <div className="space-y-2">
+                <p className="text-sm text-muted">Withdraw to</p>
+                {savedMethods.map((m) => (
+                  <label
+                    key={m.id}
+                    className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 text-sm ${
+                      !m.usable
+                        ? "border-border opacity-50"
+                        : selectedMethodId === m.id
+                          ? "border-primary bg-primary/10 cursor-pointer"
+                          : "border-border bg-surface2 cursor-pointer"
+                    }`}
+                  >
                     <input
-                      className="input col-span-2"
-                      inputMode="numeric"
-                      autoComplete="cc-number"
-                      placeholder="Card number"
-                      maxLength={23}
-                      value={cardNumber}
-                      onChange={(e) => setCardNumber(e.target.value.replace(/[^\d ]/g, ""))}
-                      required
+                      type="radio"
+                      name="payoutMethod"
+                      className="accent-primary"
+                      checked={selectedMethodId === m.id}
+                      disabled={!m.usable}
+                      onChange={() => setSelectedMethodId(m.id)}
                     />
-                    <input
-                      className="input"
-                      inputMode="numeric"
-                      autoComplete="cc-exp"
-                      placeholder="MM/YY"
-                      maxLength={7}
-                      value={cardExpiry}
-                      onChange={(e) => setCardExpiry(e.target.value.replace(/[^\d/]/g, ""))}
-                      required
-                    />
+                    <span className="flex-1 min-w-0">
+                      <span className="font-medium">{PAYOUT_LABELS[m.wayCode] || METHOD_LABELS[m.wayCode] || m.wayCode}</span>
+                      <span className="block text-muted truncate">
+                        {m.account}
+                        {m.cardValid && ` · exp ${m.cardValid}`}
+                        {!m.usable && " · no longer available"}
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => deleteMethod(m.id)}
+                      className="text-muted hover:text-red-400 px-1"
+                      aria-label="Remove payout method"
+                    >
+                      ✕
+                    </button>
+                  </label>
+                ))}
+
+                {addingMethod ? (
+                  <div className="rounded-xl border border-border p-3 space-y-2">
+                    <select className="input" value={payoutMethod} onChange={(e) => setPayoutMethod(e.target.value)}>
+                      {options.cashout.methods.map((m) => (
+                        <option key={m} value={m}>
+                          {PAYOUT_LABELS[m] || METHOD_LABELS[m] || m}
+                        </option>
+                      ))}
+                    </select>
+                    {payoutMethod === "card" ? (
+                      <div className="grid grid-cols-3 gap-2">
+                        <input
+                          className="input col-span-2"
+                          inputMode="numeric"
+                          autoComplete="cc-number"
+                          placeholder="Card number"
+                          maxLength={23}
+                          value={cardNumber}
+                          onChange={(e) => setCardNumber(e.target.value.replace(/[^\d ]/g, ""))}
+                        />
+                        <input
+                          className="input"
+                          inputMode="numeric"
+                          autoComplete="cc-exp"
+                          placeholder="MM/YY"
+                          maxLength={7}
+                          value={cardExpiry}
+                          onChange={(e) => setCardExpiry(e.target.value.replace(/[^\d/]/g, ""))}
+                        />
+                      </div>
+                    ) : (
+                      <input
+                        className="input"
+                        placeholder={PAYOUT_PLACEHOLDER[payoutMethod] || "Payout account"}
+                        value={payoutAccount}
+                        onChange={(e) => setPayoutAccount(e.target.value)}
+                      />
+                    )}
+                    {payoutMethod === "card" && (
+                      <p className="text-xs text-muted">Debit card only. We never ask for your CVV or PIN.</p>
+                    )}
+                    {methodError && <p className="text-xs text-red-400">{methodError}</p>}
+                    <div className="flex gap-2">
+                      <button type="button" onClick={saveMethod} disabled={savingMethod} className="btn-primary flex-1 py-2">
+                        {savingMethod ? "Saving…" : "Save"}
+                      </button>
+                      {savedMethods.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAddingMethod(false);
+                            setMethodError(null);
+                          }}
+                          className="flex-1 rounded-xl border border-border py-2 text-sm text-muted hover:text-white"
+                        >
+                          Cancel
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ) : (
-                  <input
-                    className="input"
-                    placeholder={PAYOUT_PLACEHOLDER[payoutMethod] || "Payout account"}
-                    value={payoutAccount}
-                    onChange={(e) => setPayoutAccount(e.target.value)}
-                    required
-                  />
+                  <>
+                    {methodError && <p className="text-xs text-red-400">{methodError}</p>}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAddingMethod(true);
+                        setMethodError(null);
+                      }}
+                      className="w-full rounded-xl border border-dashed border-border py-2.5 text-sm text-muted hover:text-white"
+                    >
+                      + Add payout method
+                    </button>
+                  </>
                 )}
-                {payoutMethod === "card" && (
-                  <p className="text-xs text-muted">Debit card only. We never ask for your CVV or PIN.</p>
-                )}
-              </>
+              </div>
             )}
             <button type="submit" className="btn-gold w-full" disabled={busy === "cashout"}>
               {busy === "cashout" ? "Processing…" : "Cashout"}
@@ -362,6 +508,19 @@ function WalletContent() {
           </div>
         </div>
       </div>
+
+      {checkoutAmount !== null && options && (
+        <CheckoutModal
+          amount={checkoutAmount}
+          methods={options.deposit.methods}
+          initialMethod={depositMethod}
+          payerName={user?.username}
+          busy={busy === "deposit"}
+          error={checkoutError}
+          onPay={payWithGateway}
+          onClose={closeCheckout}
+        />
+      )}
     </AppShell>
   );
 }

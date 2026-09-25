@@ -177,22 +177,45 @@ button{border:0;border-radius:8px;padding:10px 16px;font-weight:600;cursor:point
 .muted{color:#9aa0aa;font-size:13px}table{width:100%;border-collapse:collapse;font-size:14px}td,th{padding:6px;border-bottom:1px solid #2a2e37;text-align:left}
 form{display:inline}</style></head><body><p class="muted">MOCK GGUSOnePay — local testing only</p>${body}</body></html>`;
 
+// Hosted-checkout look (summary panel + payment panel), so local testing resembles a real cashier.
+const cashierPage = (o: PayOrder, body: string) => `<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Pay ${usd(o.amount)}</title>
+<style>*{box-sizing:border-box}body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+background:#e9ebf0;font-family:system-ui,sans-serif;color:#1c1f26;padding:16px}
+.box{display:flex;width:100%;max-width:760px;border-radius:16px;overflow:hidden;box-shadow:0 20px 50px rgba(0,0,0,.18)}
+.side{width:38%;background:linear-gradient(135deg,#dc2626,#991b1b);color:#fff;padding:24px;display:flex;flex-direction:column;gap:16px}
+.side .sum{background:#fff;color:#1c1f26;border-radius:12px;padding:16px}.side .sum b{display:block;font-size:30px;margin-top:4px}
+.side small{margin-top:auto;opacity:.85}.main{flex:1;background:#fff;padding:24px;display:flex;flex-direction:column;gap:14px}
+.muted{color:#6b7280;font-size:13px}.method{background:#f3f4f6;border-radius:12px;padding:16px;font-weight:600}
+.qr{width:140px;height:140px;background:repeating-conic-gradient(#111 0 25%,#fff 0 50%) 0 0/20px 20px;border:8px solid #fff;outline:1px solid #ddd}
+button{width:100%;border:0;border-radius:10px;padding:12px;font-weight:600;cursor:pointer;margin-top:6px;font-size:15px}
+.ok{background:#dc2626;color:#fff}.bad{background:#f3f4f6;color:#b91c1c}.warn{background:#fef3c7;color:#92400e}
+.test{border-top:1px dashed #ddd;padding-top:10px}
+@media(max-width:640px){.box{flex-direction:column}.side{width:100%}}</style></head><body>
+<div class="box"><div class="side"><strong style="font-size:20px">ZaraPlay</strong>
+<div class="sum"><span class="muted">Price Summary</span><b>${usd(o.amount)}</b></div>
+<small>🔒 MOCK GGUSOnePay — local testing only</small></div>
+<div class="main">${body}</div></div></body></html>`;
+
 app.get("/cashier/:mchOrderNo", (req, res) => {
   const o = pays.get(req.params.mchOrderNo);
   if (!o) return res.status(404).send(page("Not found", `<div class="card">Order not found (the mock was restarted?).</div>`));
   const id = encodeURIComponent(o.mchOrderNo);
   res.send(
-    page(
-      "Pay",
-      `<div class="card"><h2>Pay ${usd(o.amount)}</h2>
-      <p class="muted">Method: ${esc(o.wayCode)} · Order ${esc(o.payOrderNo)} · Status: ${STATE_NAMES[o.state]}</p>
+    cashierPage(
+      o,
+      `<h2 style="margin:0">Payment Options</h2>
+      <div class="method">${esc(o.wayCode)}</div>
       ${
         o.state < 2
-          ? `<form method="post" action="/cashier/${id}/success"><button class="ok">Pay successfully</button></form>
+          ? `<div style="display:flex;gap:16px;align-items:center"><div class="qr"></div>
+             <p class="muted">Scan the QR with the app to pay.<br>Order ${esc(o.payOrderNo)}</p></div>
+             <form method="post" action="/cashier/${id}/success"><button class="ok">Pay ${usd(o.amount)}</button></form>
+             <div class="test"><p class="muted">Test outcomes</p>
              <form method="post" action="/cashier/${id}/fail"><button class="bad">Payment fails</button></form>
-             <form method="post" action="/cashier/${id}/underpay"><button class="warn">Underpay by $1</button></form>`
+             <form method="post" action="/cashier/${id}/underpay"><button class="warn">Underpay by $1</button></form></div>`
           : `<p>This order is already ${STATE_NAMES[o.state].toLowerCase()}.</p>`
-      }</div>`
+      }`
     )
   );
 });

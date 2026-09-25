@@ -74,6 +74,20 @@ export default function DashboardPage() {
           </p>
         </div>
 
+        <Link
+          href="/rewards#roulette"
+          className="card flex items-center gap-4 hover:border-primary transition-colors bg-gradient-to-r from-primary/20 to-surface"
+        >
+          <span className="text-4xl" aria-hidden>
+            🎡
+          </span>
+          <span className="flex-1">
+            <span className="block font-semibold">Spin to Win</span>
+            <span className="block text-sm text-muted">Your free daily spin is waiting — win cash prizes.</span>
+          </span>
+          <span className="text-primary font-semibold text-sm">Spin →</span>
+        </Link>
+
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <NotificationCard />
           {phoneVerified ? (

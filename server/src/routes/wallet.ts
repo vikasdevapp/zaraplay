@@ -33,7 +33,8 @@ walletRouter.get("/payment-options", (_req, res) => {
     deposit: { gateway: gateway.payEnabled, methods: gateway.payEnabled ? gateway.payWayCodes : [] },
     cashout: {
       gateway: gateway.transferEnabled,
-      methods: gateway.transferEnabled ? gateway.transferWayCodes : [],
+      // Offered even while payouts are manual, so the admin knows where to send the money.
+      methods: gateway.transferWayCodes,
     },
   });
 });
@@ -166,17 +167,20 @@ walletRouter.post("/deposit/:id/refresh", async (req: AuthedRequest, res) => {
 const cashoutSchema = z.object({
   amount: z.number().positive(),
   fromFreePlay: z.boolean().optional().default(false),
-  payout: z
-    .object({
-      wayCode: z.string().max(30),
-      // Handle-based methods ($Cashtag, $ChimeSign, email…)
-      account: z.string().trim().min(2).max(100).optional(),
-      // Card payouts
-      cardNumber: z.string().max(30).optional(),
-      cardExpiry: z.string().max(10).optional(),
-    })
-    .optional(),
+  // A saved payout method (see /payout-methods); required whenever payout methods are offered.
+  payoutMethodId: z.string().max(40).optional(),
 });
+
+const payoutMethodSchema = z.object({
+  wayCode: z.string().max(30),
+  // Handle-based methods ($Cashtag, $ChimeSign, email…)
+  account: z.string().trim().min(2).max(100).optional(),
+  // Card payouts
+  cardNumber: z.string().max(30).optional(),
+  cardExpiry: z.string().max(10).optional(),
+});
+
+const MAX_PAYOUT_METHODS = 5;
 
 // Luhn checksum: catches typos in card numbers before anything is sent anywhere.
 function luhnValid(digits: string) {
@@ -223,29 +227,91 @@ function payoutAccountError(wayCode: string, account: string): string | null {
   }
 }
 
+// A saved card's MM/YYYY expiry is re-checked at cashout time, since it may lapse after saving.
+function cardExpired(cardValid: string) {
+  const [month, year] = cardValid.split("/").map(Number);
+  const now = new Date();
+  return year < now.getFullYear() || (year === now.getFullYear() && month < now.getMonth() + 1);
+}
+
+walletRouter.get("/payout-methods", async (req: AuthedRequest, res) => {
+  const methods = await prisma.payoutMethod.findMany({
+    where: { userId: req.userId! },
+    orderBy: { createdAt: "asc" },
+    select: { id: true, wayCode: true, account: true, cardValid: true, createdAt: true },
+  });
+  // Methods the platform no longer offers stay listed (so users can delete them) but can't be used.
+  res.json({ methods: methods.map((m) => ({ ...m, usable: gateway.transferWayCodes.includes(m.wayCode) })) });
+});
+
+walletRouter.post("/payout-methods", async (req: AuthedRequest, res) => {
+  const parsed = payoutMethodSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid payout details." });
+  const input = parsed.data;
+  if (!gateway.transferWayCodes.includes(input.wayCode)) return res.status(400).json({ error: "Unsupported payout method." });
+
+  const count = await prisma.payoutMethod.count({ where: { userId: req.userId! } });
+  if (count >= MAX_PAYOUT_METHODS) {
+    return res.status(400).json({ error: `You can save up to ${MAX_PAYOUT_METHODS} payout methods. Remove one first.` });
+  }
+
+  let data: { wayCode: string; account: string; cardValid?: string; secret?: string };
+  if (input.wayCode === "card") {
+    const digits = (input.cardNumber || "").replace(/[\s-]/g, "");
+    if (!/^\d{12,19}$/.test(digits) || !luhnValid(digits)) return res.status(400).json({ error: "Enter a valid card number." });
+    const cardValid = normalizeCardExpiry(input.cardExpiry || "");
+    if (!cardValid) return res.status(400).json({ error: "Enter a valid, unexpired card expiry date (MM/YY)." });
+    data = { wayCode: "card", account: `•••• ${digits.slice(-4)}`, cardValid, secret: sealSecret(digits) };
+  } else {
+    const account = input.account || "";
+    const accountError = payoutAccountError(input.wayCode, account);
+    if (accountError) return res.status(400).json({ error: accountError });
+    const existing = await prisma.payoutMethod.findFirst({
+      where: { userId: req.userId!, wayCode: input.wayCode, account: { equals: account, mode: "insensitive" } },
+      select: { id: true, wayCode: true, account: true, cardValid: true, createdAt: true },
+    });
+    if (existing) return res.json({ method: { ...existing, usable: true } });
+    data = { wayCode: input.wayCode, account };
+  }
+
+  const method = await prisma.payoutMethod.create({
+    data: { ...data, userId: req.userId! },
+    select: { id: true, wayCode: true, account: true, cardValid: true, createdAt: true },
+  });
+  res.json({ method: { ...method, usable: true } });
+});
+
+walletRouter.delete("/payout-methods/:id", async (req: AuthedRequest, res) => {
+  // Pending cashouts keep their own copy of the details, so deleting is always safe.
+  const { count } = await prisma.payoutMethod.deleteMany({ where: { id: req.params.id, userId: req.userId! } });
+  if (!count) return res.status(404).json({ error: "Payout method not found." });
+  res.json({ ok: true });
+});
+
 walletRouter.post("/cashout", async (req: AuthedRequest, res) => {
   const parsed = cashoutSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid cashout amount." });
-  const { amount, fromFreePlay, payout } = parsed.data;
+  const { amount, fromFreePlay, payoutMethodId } = parsed.data;
 
-  // What gets stored: display-safe details in meta, and (card only) the sealed card number.
+  // Snapshot of the chosen saved method: display-safe details in meta, and (card only) the
+  // sealed card number, which the admin's approval hands to the gateway.
   let payoutMeta: { wayCode: string; account: string; cardValid?: string } | null = null;
   let payoutSecret: string | null = null;
-  if (gateway.transferEnabled) {
-    if (!payout) return res.status(400).json({ error: "Choose where to receive your payout." });
-    if (!gateway.transferWayCodes.includes(payout.wayCode)) return res.status(400).json({ error: "Unsupported payout method." });
-    if (payout.wayCode === "card") {
-      const digits = (payout.cardNumber || "").replace(/[\s-]/g, "");
-      if (!/^\d{12,19}$/.test(digits) || !luhnValid(digits)) return res.status(400).json({ error: "Enter a valid card number." });
-      const cardValid = normalizeCardExpiry(payout.cardExpiry || "");
-      if (!cardValid) return res.status(400).json({ error: "Enter a valid, unexpired card expiry date (MM/YY)." });
-      payoutMeta = { wayCode: "card", account: `•••• ${digits.slice(-4)}`, cardValid };
-      payoutSecret = sealSecret(digits);
+  if (gateway.transferWayCodes.length) {
+    const method = payoutMethodId
+      ? await prisma.payoutMethod.findFirst({ where: { id: payoutMethodId, userId: req.userId! }, omit: { secret: false } })
+      : null;
+    if (!method) return res.status(400).json({ error: "Choose where to receive your payout." });
+    if (!gateway.transferWayCodes.includes(method.wayCode)) {
+      return res.status(400).json({ error: "This payout method is no longer available. Choose another one." });
+    }
+    if (method.wayCode === "card") {
+      if (!method.secret || !method.cardValid) return res.status(400).json({ error: "This card can't be used. Remove it and add it again." });
+      if (cardExpired(method.cardValid)) return res.status(400).json({ error: "This card has expired. Remove it and add a new one." });
+      payoutMeta = { wayCode: "card", account: method.account, cardValid: method.cardValid };
+      payoutSecret = method.secret;
     } else {
-      const account = payout.account || "";
-      const accountError = payoutAccountError(payout.wayCode, account);
-      if (accountError) return res.status(400).json({ error: accountError });
-      payoutMeta = { wayCode: payout.wayCode, account };
+      payoutMeta = { wayCode: method.wayCode, account: method.account };
     }
   }
 

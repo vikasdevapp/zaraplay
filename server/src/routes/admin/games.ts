@@ -29,11 +29,18 @@ adminGamesRouter.get("/", async (_req, res) => {
   res.json({ games });
 });
 
+// Shown to players as a clickable link, so only http(s) — never javascript: or data: URLs.
+const webUrl = z
+  .string()
+  .trim()
+  .url()
+  .refine((u) => /^https?:\/\//i.test(u), "Play link must start with http:// or https://");
+
 const createSchema = z.object({
   name: z.string().min(1).max(60),
   imageUrl: z.string().url().optional().or(z.literal("")),
   // Admin reference only — never surfaced as a live link on the customer site.
-  playUrl: z.string().url().optional().or(z.literal("")),
+  playUrl: webUrl.optional().or(z.literal("")),
   isActive: z.boolean().optional(),
   sortOrder: z.number().int().optional(),
 });
@@ -63,7 +70,7 @@ adminGamesRouter.post("/", async (req: AuthedRequest, res) => {
 const updateSchema = z.object({
   name: z.string().min(1).max(60).optional(),
   imageUrl: z.string().url().optional().or(z.literal("")),
-  playUrl: z.string().url().optional().or(z.literal("")),
+  playUrl: webUrl.optional().or(z.literal("")),
   isActive: z.boolean().optional(),
   sortOrder: z.number().int().optional(),
 });

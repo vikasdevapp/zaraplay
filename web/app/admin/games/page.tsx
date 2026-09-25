@@ -124,7 +124,7 @@ export default function AdminGamesPage() {
           />
           <input
             className="input"
-            placeholder="Download / Play link (optional, admin reference only)"
+            placeholder="Play link (https://…) — opens from the Play Now button"
             value={form.playUrl}
             onChange={(e) => setForm((f) => ({ ...f, playUrl: e.target.value }))}
           />

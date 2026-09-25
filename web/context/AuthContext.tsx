@@ -38,11 +38,24 @@ interface AuthContextValue {
   logout: () => Promise<void>;
   /** Exchanges the refresh token for a new pair. Concurrent callers share one in-flight call. */
   refresh: () => Promise<string | null>;
+  /** Resolves once the stored session has been read from localStorage. */
+  ready: Promise<void>;
+  /** Current access token, read at call time (not from a render's closure). */
+  getAccessToken: () => string | null;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 const STORAGE_KEY = "rewardsplay_session";
+
+function readStoredSession(): AuthPayload | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as AuthPayload) : null;
+  } catch {
+    return null; // corrupted or blocked storage
+  }
+}
 
 function destinationFor(role: string) {
   if (["ADMIN", "MASTER_ADMIN"].includes(role)) return "/admin";
@@ -53,39 +66,71 @@ function destinationFor(role: string) {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
-  const [refreshToken, setRefreshToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
   const refreshPromiseRef = useRef<Promise<string | null> | null>(null);
+  // Child effects run before this provider's effect, so on a full page load (e.g. coming back
+  // from the payment cashier) pages fire requests before the session is read. Those requests
+  // wait on `ready` and then read the tokens from this ref instead of a stale render closure —
+  // otherwise they'd 401 with no token and log the user out.
+  const tokensRef = useRef<{ accessToken: string | null; refreshToken: string | null }>({ accessToken: null, refreshToken: null });
+  const [readyGate] = useState(() => {
+    let resolve!: () => void;
+    const promise = new Promise<void>((r) => (resolve = r));
+    return { promise, resolve };
+  });
 
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as AuthPayload;
-        setUser(parsed.user);
-        setAccessToken(parsed.accessToken);
-        setRefreshToken(parsed.refreshToken);
-      }
-    } catch {
-      // ignore corrupted local storage
-    }
-    setLoading(false);
-  }, []);
-
-  const persist = useCallback((data: AuthPayload) => {
+  // Takes on a session already saved to localStorage (by this tab earlier, or by another tab).
+  const adopt = useCallback((data: AuthPayload) => {
+    tokensRef.current = { accessToken: data.accessToken, refreshToken: data.refreshToken };
     setUser(data.user);
     setAccessToken(data.accessToken);
-    setRefreshToken(data.refreshToken);
+  }, []);
+
+  useEffect(() => {
+    const stored = readStoredSession();
+    if (stored) adopt(stored);
+    setLoading(false);
+    readyGate.resolve();
+  }, [readyGate, adopt]);
+
+  // All tabs share one session (the server allows one per user, and each refresh rotates it).
+  // Follow other tabs' refreshes, logins and logouts, or this tab keeps using tokens the server
+  // has already replaced and gets signed out.
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== STORAGE_KEY) return;
+      const stored = readStoredSession();
+      if (!stored) {
+        tokensRef.current = { accessToken: null, refreshToken: null };
+        setUser(null);
+        setAccessToken(null);
+        return;
+      }
+      const switchedAccount = user && stored.user.id !== user.id;
+      adopt(stored);
+      // A different account signed in elsewhere in this browser: reload into its pages.
+      if (switchedAccount) window.location.assign(destinationFor(stored.user.role));
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [adopt, user]);
+
+  const persist = useCallback((data: AuthPayload) => {
+    tokensRef.current = { accessToken: data.accessToken, refreshToken: data.refreshToken };
+    setUser(data.user);
+    setAccessToken(data.accessToken);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   }, []);
 
   const clearAuth = useCallback(() => {
+    tokensRef.current = { accessToken: null, refreshToken: null };
     setUser(null);
     setAccessToken(null);
-    setRefreshToken(null);
     localStorage.removeItem(STORAGE_KEY);
   }, []);
+
+  const getAccessToken = useCallback(() => tokensRef.current.accessToken, []);
 
   const login = useCallback(
     async (emailOrUsername: string, password: string) => {
@@ -129,43 +174,70 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    const token = tokensRef.current.accessToken;
     try {
-      if (accessToken) await apiFetch("/api/auth/logout", { method: "POST" }, accessToken);
+      if (token) await apiFetch("/api/auth/logout", { method: "POST" }, token);
     } catch {
       // best-effort; clear local session regardless
     } finally {
       clearAuth();
       router.push("/login");
     }
-  }, [accessToken, clearAuth, router]);
+  }, [clearAuth, router]);
 
   // Concurrent 401s (several in-flight requests when the access token expires) share one
-  // refresh call instead of each racing to rotate the refresh token themselves.
+  // refresh call instead of each racing to rotate the refresh token themselves. Across tabs,
+  // a browser lock serializes refreshes, and a tab first checks whether another one already
+  // rotated the session — spending a stale refresh token would be refused and sign out every tab.
   const refresh = useCallback((): Promise<string | null> => {
-    if (!refreshToken) return Promise.resolve(null);
     if (!refreshPromiseRef.current) {
-      refreshPromiseRef.current = apiFetch<AuthPayload>("/api/auth/refresh", {
-        method: "POST",
-        body: JSON.stringify({ refreshToken }),
-      })
-        .then((data) => {
+      const rejectedToken = tokensRef.current.accessToken;
+      const run = async (): Promise<string | null> => {
+        const stored = readStoredSession();
+        if (stored && stored.accessToken !== rejectedToken) {
+          adopt(stored);
+          return stored.accessToken;
+        }
+        const refreshToken = stored?.refreshToken ?? tokensRef.current.refreshToken;
+        if (!refreshToken) return null;
+        try {
+          const data = await apiFetch<AuthPayload>("/api/auth/refresh", {
+            method: "POST",
+            body: JSON.stringify({ refreshToken }),
+          });
           persist(data);
           return data.accessToken;
-        })
-        .catch(() => {
+        } catch {
           clearAuth();
           return null;
-        })
-        .finally(() => {
-          refreshPromiseRef.current = null;
-        });
+        }
+      };
+      const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
+      // request() resolves to the callback's result; .then() flattens the DOM typings' nested Promise.
+      const pending = (locks ? locks.request("zp-auth-refresh", run).then((token) => token) : run()).finally(() => {
+        refreshPromiseRef.current = null;
+      });
+      refreshPromiseRef.current = pending;
+      return pending;
     }
     return refreshPromiseRef.current;
-  }, [refreshToken, persist, clearAuth]);
+  }, [persist, clearAuth, adopt]);
 
   return (
     <AuthContext.Provider
-      value={{ user, accessToken, loading, login, startSignup, verifySignupOtp, resendSignupOtp, logout, refresh }}
+      value={{
+        user,
+        accessToken,
+        loading,
+        login,
+        startSignup,
+        verifySignupOtp,
+        resendSignupOtp,
+        logout,
+        refresh,
+        ready: readyGate.promise,
+        getAccessToken,
+      }}
     >
       {children}
     </AuthContext.Provider>
@@ -180,11 +252,12 @@ export function useAuth() {
 
 /** Authenticated fetch that transparently refreshes an expired access token once, then logs out if that also fails. */
 export function useApi() {
-  const { accessToken, refresh, logout } = useAuth();
+  const { ready, getAccessToken, refresh, logout } = useAuth();
   return useCallback(
     async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
+      await ready;
       try {
-        return await apiFetch<T>(path, options, accessToken);
+        return await apiFetch<T>(path, options, getAccessToken());
       } catch (err) {
         if (err instanceof ApiError && err.status === 401) {
           const newToken = await refresh();
@@ -201,17 +274,18 @@ export function useApi() {
         throw err;
       }
     },
-    [accessToken, refresh, logout]
+    [ready, getAccessToken, refresh, logout]
   );
 }
 
 /** Same transparent-refresh behavior as useApi, for multipart file uploads. */
 export function useApiUpload() {
-  const { accessToken, refresh, logout } = useAuth();
+  const { ready, getAccessToken, refresh, logout } = useAuth();
   return useCallback(
     async <T,>(path: string, file: File, fieldName: string): Promise<T> => {
+      await ready;
       try {
-        return await rawApiUpload<T>(path, file, fieldName, accessToken);
+        return await rawApiUpload<T>(path, file, fieldName, getAccessToken());
       } catch (err) {
         if (err instanceof ApiError && err.status === 401) {
           const newToken = await refresh();
@@ -228,6 +302,6 @@ export function useApiUpload() {
         throw err;
       }
     },
-    [accessToken, refresh, logout]
+    [ready, getAccessToken, refresh, logout]
   );
 }
