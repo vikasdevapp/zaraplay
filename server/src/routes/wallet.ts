@@ -41,6 +41,32 @@ walletRouter.get("/payment-options", (_req, res) => {
 
 const MAX_OPEN_GATEWAY_DEPOSITS = 3;
 
+const PAY_METHOD_LABELS: Record<string, string> = {
+  cashapp: "Cash App",
+  ecashapp: "Cash App",
+  zelle: "Zelle",
+  btcpay: "Bitcoin",
+  paypal: "PayPal",
+  applepay: "Apple Pay",
+  googlepay: "Google Pay",
+  card: "Card",
+  chime: "Chime",
+};
+
+// Turns the gateway's rejection into something the user can act on; unknown errors stay generic.
+function depositErrorMessage(err: unknown, method: string) {
+  const label = PAY_METHOD_LABELS[method] || "This payment method";
+  const others = gateway.payWayCodes.length > 1 ? " or choose another payment method" : "";
+  const msg = err instanceof GatewayError ? err.message : "";
+  if (/maintenance/i.test(msg)) {
+    return `${label} payments are temporarily under maintenance. Please try again later${others}.`;
+  }
+  if (/channel|not (open|available|support)|disabled|closed/i.test(msg)) {
+    return `${label} payments are currently unavailable. Please try again later${others}.`;
+  }
+  return "Could not start the payment. Please try again shortly.";
+}
+
 const depositSchema = z.object({
   amount: z.number().positive().max(1000000),
   wayCode: z.string().max(30).optional(),
@@ -126,7 +152,7 @@ walletRouter.post("/deposit", async (req: AuthedRequest, res) => {
       const message = err instanceof GatewayError ? err.message : "Payment gateway is unavailable.";
       console.error(`[ggusonepay] create pay order failed for ${transaction.id}`, err);
       await rejectDeposit(transaction.id, `Gateway error: ${message}`);
-      return res.status(502).json({ error: "Could not start the payment. Please try again shortly." });
+      return res.status(502).json({ error: depositErrorMessage(err, method) });
     }
   }
 
