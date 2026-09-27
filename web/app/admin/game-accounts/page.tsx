@@ -6,7 +6,7 @@ import { useApi } from "@/context/AuthContext";
 
 interface Account {
   id: string;
-  gameUsername: string;
+  gameUsername: string | null;
   balance: string;
   createdAt: string;
   user: { id: string; fullName: string; username: string };
@@ -77,7 +77,7 @@ export default function AdminGameAccountsPage() {
               <tr key={a.id} className="hover:bg-surface2">
                 <td className="px-4 py-3">{a.user.fullName} <span className="text-muted">@{a.user.username}</span></td>
                 <td className="px-4 py-3">{a.game.name}</td>
-                <td className="px-4 py-3 font-mono text-xs">{a.gameUsername}</td>
+                <td className="px-4 py-3 font-mono text-xs">{a.gameUsername ?? <span className="text-muted font-sans">being created</span>}</td>
                 <td className="px-4 py-3 text-primary">${Number(a.balance).toFixed(2)}</td>
                 <td className="px-4 py-3 text-muted">{new Date(a.createdAt).toLocaleDateString()}</td>
               </tr>

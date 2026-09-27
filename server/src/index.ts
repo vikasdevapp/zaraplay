@@ -1,4 +1,7 @@
 import "dotenv/config";
+// Routes errors thrown in async handlers to the error handler below instead of an unhandled
+// rejection (which would crash the process).
+import "express-async-errors";
 import path from "path";
 import express from "express";
 import cors from "cors";
@@ -77,9 +80,15 @@ app.use((_req, res) => res.status(404).json({ error: "Not found." }));
 
 // Catches multer errors (bad file type, too large) and anything else thrown in a route
 // so the client always gets JSON back instead of Express's default HTML error page.
-app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+app.use((err: Error & { status?: number; statusCode?: number }, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);
-  res.status(400).json({ error: err.message || "Something went wrong." });
+  if (err.message === "Not allowed by CORS") return res.status(403).json({ error: "Not allowed." });
+  // Upload validation (lib/upload.ts file filter, multer size limits) is the admin's input error.
+  if (err.name === "MulterError" || err.message.startsWith("Only PNG")) return res.status(400).json({ error: err.message });
+  // Client errors raised by middleware (e.g. malformed JSON) carry their own 4xx status.
+  const status = err.status || err.statusCode;
+  if (status && status >= 400 && status < 500) return res.status(status).json({ error: err.message || "Invalid request." });
+  res.status(500).json({ error: "Something went wrong. Please try again." });
 });
 
 const port = Number(process.env.PORT || 4000);

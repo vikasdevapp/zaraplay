@@ -12,9 +12,17 @@ interface Transaction {
   user: { id: string; fullName: string; username: string };
 }
 
+const TABS = [
+  ["DEPOSIT", "Wallet deposits"],
+  ["REDEEM", "Wallet cashouts"],
+  ["GAME_RECHARGE", "Game loads"],
+  ["GAME_REDEEM", "Game redeems"],
+] as const;
+type Tab = (typeof TABS)[number][0];
+
 export default function AgentLedgerPage() {
   const api = useApi();
-  const [tab, setTab] = useState<"RECHARGE" | "REDEEM">("RECHARGE");
+  const [tab, setTab] = useState<Tab>("DEPOSIT");
   const [rows, setRows] = useState<Transaction[]>([]);
 
   const load = useCallback(
@@ -29,29 +37,27 @@ export default function AgentLedgerPage() {
     load(tab).catch(() => {});
   }, [tab, load]);
 
-  const total = rows.reduce((sum, r) => sum + Number(r.amount), 0);
+  // Pending and rejected rows haven't moved money (rejected loads were refunded).
+  const total = rows.filter((r) => r.status === "COMPLETED").reduce((sum, r) => sum + Number(r.amount), 0);
 
   return (
     <AgentShell>
-      <h1 className="text-2xl font-bold mb-6">Recharge Ledger</h1>
+      <h1 className="text-2xl font-bold mb-6">Ledger</h1>
 
-      <div className="flex gap-2 mb-4">
-        <button
-          onClick={() => setTab("RECHARGE")}
-          className={`px-4 py-2 rounded-lg text-sm font-medium ${tab === "RECHARGE" ? "bg-primary text-white" : "bg-surface2 text-muted"}`}
-        >
-          Recharge (Deposits)
-        </button>
-        <button
-          onClick={() => setTab("REDEEM")}
-          className={`px-4 py-2 rounded-lg text-sm font-medium ${tab === "REDEEM" ? "bg-primary text-white" : "bg-surface2 text-muted"}`}
-        >
-          Redeem (Cashouts)
-        </button>
+      <div className="flex flex-wrap gap-2 mb-4">
+        {TABS.map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => setTab(key)}
+            className={`px-4 py-2 rounded-lg text-sm font-medium ${tab === key ? "bg-primary text-white" : "bg-surface2 text-muted"}`}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       <div className="card mb-4">
-        <p className="text-muted text-xs mb-1">Total {tab === "RECHARGE" ? "Recharged" : "Redeemed"} (last 100)</p>
+        <p className="text-muted text-xs mb-1">Completed total · {TABS.find(([k]) => k === tab)?.[1]} (last 100)</p>
         <p className="text-2xl font-extrabold text-primary">${total.toFixed(2)}</p>
         <p className="text-xs text-muted">{rows.length} rows</p>
       </div>

@@ -7,9 +7,10 @@ import { useAuth } from "@/context/AuthContext";
 
 const NAV_ITEMS = [
   { href: "/agent", label: "Dashboard", icon: "🧭" },
-  { href: "/agent/game-balances", label: "Game Balances", icon: "💰" },
+  { href: "/agent/requests", label: "Requests", icon: "📥" },
   { href: "/agent/game-records", label: "Game Records", icon: "📄" },
-  { href: "/agent/ledger", label: "Recharge Ledger", icon: "🧾" },
+  { href: "/agent/game-balances", label: "Game Balances", icon: "💰" },
+  { href: "/agent/ledger", label: "Ledger", icon: "🧾" },
   { href: "/agent/activity", label: "My Activity", icon: "🕓" },
 ];
 
@@ -17,6 +18,7 @@ const AGENT_DASHBOARD_ROLES = ["AGENT", "ADMIN", "MASTER_ADMIN"];
 
 export default function AgentShell({ children }: { children: ReactNode }) {
   const { user, loading, logout } = useAuth();
+  const isAdmin = user?.role === "ADMIN" || user?.role === "MASTER_ADMIN";
   const pathname = usePathname();
   const router = useRouter();
 
@@ -60,8 +62,13 @@ export default function AgentShell({ children }: { children: ReactNode }) {
             </Link>
           ))}
         </nav>
-        <div className="hidden md:block px-4 mt-4">
-          <p className="text-xs text-muted mb-2">
+        <div className="px-4 pb-3 md:pb-0 md:mt-4 flex md:block items-center justify-between gap-3">
+          {isAdmin && (
+            <Link href="/admin" className="block text-sm text-muted hover:text-white md:mb-3">
+              ← Admin panel
+            </Link>
+          )}
+          <p className="hidden md:block text-xs text-muted mb-2">
             {user.fullName} · @{user.username}
           </p>
           <button onClick={() => logout()} className="text-sm text-muted hover:text-white">

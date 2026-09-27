@@ -2,6 +2,7 @@ import { Prisma, Transaction } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { calcReferralBonus } from "./bonus";
 import { getPlatformSettings } from "../lib/settings";
+import { autoLoadDeposit } from "../lib/gameAccounts";
 
 // Credits a PENDING deposit (amount + stashed bonus + first-deposit referral) and marks it
 // COMPLETED. Shared by admin approval and the payment gateway callback; the status flip is a
@@ -23,7 +24,7 @@ export async function completeDeposit(transactionId: string, extraMeta?: Prisma.
     });
     if (claimed.count === 0) return null;
 
-    const meta = (transaction.meta as { bonusKind?: string; isFirstDeposit?: boolean } | null) || {};
+    const meta = (transaction.meta as { bonusKind?: string; isFirstDeposit?: boolean; gameLoad?: { userGameId?: string } } | null) || {};
     const bonusAmount = Number(transaction.payoutAmount || 0);
     const bonusKind = meta.bonusKind || "DEPOSIT_BONUS";
     const amount = Number(transaction.amount);
@@ -66,6 +67,11 @@ export async function completeDeposit(transactionId: string, extraMeta?: Prisma.
           },
         });
       }
+    }
+
+    // Deposited "for" a game: the whole credit (deposit + bonus) goes straight into a load request.
+    if (meta.gameLoad?.userGameId) {
+      await autoLoadDeposit(tx, transaction.userId, meta.gameLoad.userGameId, amount + bonusAmount, transaction.id);
     }
 
     return tx.transaction.findUnique({ where: { id: transactionId } });

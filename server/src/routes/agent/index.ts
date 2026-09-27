@@ -1,31 +1,170 @@
-import { Router } from "express";
+import { Router, Response } from "express";
 import { Prisma } from "@prisma/client";
+import { z } from "zod";
 import { prisma } from "../../lib/prisma";
 import { requireAuth, requireRole, AuthedRequest } from "../../middleware/auth";
+import { logAudit } from "../../lib/audit";
+import { GameError, claimRequest, completeRequest, rejectRequest, releaseRequest, syncBalance, updateCredentials } from "../../lib/gameAccounts";
 
 export const agentRouter = Router();
 
-// AGENT is the day-to-day operations role; ADMIN/MASTER_ADMIN can also view this dashboard.
+// AGENT is the day-to-day operations role; ADMIN/MASTER_ADMIN can also work this dashboard.
 agentRouter.use(requireAuth, requireRole("AGENT", "ADMIN", "MASTER_ADMIN"));
 
-agentRouter.get("/stats", async (_req, res) => {
-  const [gameAccountCount, pendingCashouts, gameBalanceSum] = await Promise.all([
-    prisma.userGame.count(),
+const actorOf = (req: AuthedRequest) => ({ id: req.userId!, role: req.role! });
+
+function sendError(res: Response, err: unknown) {
+  if (err instanceof GameError) return res.status(err.status).json({ error: err.message });
+  throw err;
+}
+
+agentRouter.get("/stats", async (req: AuthedRequest, res) => {
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const [gameAccountCount, gameBalanceSum, pendingByType, mine, doneToday, pendingCashouts] = await Promise.all([
+    prisma.userGame.count({ where: { status: "ACTIVE" } }),
+    prisma.userGame.aggregate({ where: { status: "ACTIVE" }, _sum: { balance: true } }),
+    prisma.gameRequest.groupBy({ by: ["type"], where: { status: "PENDING" }, _count: { _all: true } }),
+    prisma.gameRequest.count({ where: { status: "PENDING", claimedById: req.userId! } }),
+    prisma.gameRequest.count({ where: { handledById: req.userId!, completedAt: { gte: startOfToday } } }),
     prisma.transaction.count({ where: { type: "CASHOUT", status: "PENDING" } }),
-    prisma.userGame.aggregate({ _sum: { balance: true } }),
   ]);
+  const pending = Object.fromEntries(pendingByType.map((r) => [r.type, r._count._all]));
   res.json({
     gameAccountCount,
-    pendingCashouts,
     totalGameBalance: gameBalanceSum._sum.balance || 0,
+    pendingRequests: pendingByType.reduce((n, r) => n + r._count._all, 0),
+    pendingByType: pending,
+    myOpenRequests: mine,
+    handledToday: doneToday,
+    pendingCashouts,
   });
 });
 
-// "Game Balances" — aggregate balance per game, mirrors the reference's provider-balance
-// screen but reads our own stored data only (no live third-party balance check).
+// ------------------------------------------------------------------------------------------
+// Request queue
+// ------------------------------------------------------------------------------------------
+
+const requestInclude = {
+  user: { select: { id: true, fullName: true, username: true, email: true } },
+  userGame: {
+    select: {
+      id: true,
+      status: true,
+      gameUsername: true,
+      gamePassword: true,
+      balance: true,
+      balanceSyncedAt: true,
+      game: { select: { id: true, name: true, imageUrl: true } },
+    },
+  },
+  claimedBy: { select: { id: true, username: true } },
+  handledBy: { select: { id: true, username: true } },
+} satisfies Prisma.GameRequestInclude;
+
+agentRouter.get("/requests", async (req: AuthedRequest, res) => {
+  const status = ["PENDING", "COMPLETED", "REJECTED", "CANCELLED"].includes(String(req.query.status)) ? String(req.query.status) : "PENDING";
+  const type = ["CREATE_ACCOUNT", "RECHARGE", "REDEEM", "PASSWORD_RESET"].includes(String(req.query.type)) ? String(req.query.type) : undefined;
+  const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
+
+  const where: Prisma.GameRequestWhereInput = {
+    status: status as Prisma.EnumGameRequestStatusFilter["equals"],
+    ...(type ? { type: type as Prisma.EnumGameRequestTypeFilter["equals"] } : {}),
+    ...(req.query.mine === "1" ? { claimedById: req.userId! } : {}),
+    ...(search
+      ? {
+          OR: [
+            { user: { username: { contains: search, mode: "insensitive" } } },
+            { user: { email: { contains: search, mode: "insensitive" } } },
+            { userGame: { gameUsername: { contains: search, mode: "insensitive" } } },
+          ],
+        }
+      : {}),
+  };
+
+  const requests = await prisma.gameRequest.findMany({
+    where,
+    // Oldest first while waiting (first come, first served); newest first once finished.
+    orderBy: { createdAt: status === "PENDING" ? "asc" : "desc" },
+    take: 100,
+    include: requestInclude,
+  });
+  res.json({ requests });
+});
+
+agentRouter.post("/requests/:id/claim", async (req: AuthedRequest, res) => {
+  try {
+    await claimRequest(req.params.id, actorOf(req));
+    res.json({ ok: true });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+agentRouter.post("/requests/:id/release", async (req: AuthedRequest, res) => {
+  try {
+    await releaseRequest(req.params.id, actorOf(req));
+    res.json({ ok: true });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+const completeSchema = z.object({
+  gameUsername: z.string().max(100).optional(),
+  gamePassword: z.string().max(100).optional(),
+  redeemedAmount: z.number().finite().optional(),
+  remainingBalance: z.number().finite().optional(),
+  note: z.string().max(300).optional(),
+});
+
+agentRouter.post("/requests/:id/complete", async (req: AuthedRequest, res) => {
+  const parsed = completeSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid input." });
+  try {
+    const request = await completeRequest(req.params.id, actorOf(req), parsed.data);
+    await logAudit(req.userId!, `GAME_${request.type}_COMPLETED`, {
+      targetType: "GameRequest",
+      targetId: request.id,
+      meta: {
+        userId: request.userId,
+        amount: Number(request.amount),
+        ...(parsed.data.redeemedAmount !== undefined ? { redeemedAmount: parsed.data.redeemedAmount, remainingBalance: parsed.data.remainingBalance } : {}),
+      },
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+const rejectSchema = z.object({ reason: z.string().min(1, "Give a reason.").max(300) });
+
+agentRouter.post("/requests/:id/reject", async (req: AuthedRequest, res) => {
+  const parsed = rejectSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Tell the player why this request was rejected." });
+  try {
+    const request = await rejectRequest(req.params.id, actorOf(req), parsed.data.reason);
+    await logAudit(req.userId!, `GAME_${request.type}_REJECTED`, {
+      targetType: "GameRequest",
+      targetId: request.id,
+      meta: { userId: request.userId, amount: Number(request.amount), reason: parsed.data.reason },
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+// ------------------------------------------------------------------------------------------
+// Game accounts
+// ------------------------------------------------------------------------------------------
+
+// "Game Balances": total recorded balance per game across active accounts.
 agentRouter.get("/game-balances", async (_req, res) => {
   const rows = await prisma.userGame.groupBy({
     by: ["gameId"],
+    where: { status: "ACTIVE" },
     _sum: { balance: true },
     _count: { _all: true },
   });
@@ -40,12 +179,21 @@ agentRouter.get("/game-balances", async (_req, res) => {
   });
 });
 
-// "Game Records" — every player's per-game account, searchable.
+// "Game Records": every player's game account with its login, searchable.
 agentRouter.get("/game-records", async (req, res) => {
   const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
-  const where: Prisma.UserGameWhereInput = search
-    ? { user: { OR: [{ username: { contains: search, mode: "insensitive" } }, { email: { contains: search, mode: "insensitive" } }] } }
-    : {};
+  const where: Prisma.UserGameWhereInput = {
+    status: { in: ["ACTIVE", "PENDING"] },
+    ...(search
+      ? {
+          OR: [
+            { user: { username: { contains: search, mode: "insensitive" } } },
+            { user: { email: { contains: search, mode: "insensitive" } } },
+            { gameUsername: { contains: search, mode: "insensitive" } },
+          ],
+        }
+      : {}),
+  };
 
   const accounts = await prisma.userGame.findMany({
     where,
@@ -54,14 +202,58 @@ agentRouter.get("/game-records", async (req, res) => {
     include: {
       user: { select: { id: true, fullName: true, username: true } },
       game: { select: { id: true, name: true } },
+      balanceSyncedBy: { select: { username: true } },
     },
   });
   res.json({ accounts });
 });
 
-// "Recharge Ledger" — our own recharge (deposit) / redeem (cashout) transaction ledger.
+const balanceSchema = z.object({ balance: z.number().finite() });
+
+agentRouter.post("/game-accounts/:id/balance", async (req: AuthedRequest, res) => {
+  const parsed = balanceSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Enter a valid balance." });
+  try {
+    const before = await prisma.userGame.findUnique({ where: { id: req.params.id }, select: { balance: true, userId: true } });
+    await syncBalance(req.params.id, actorOf(req), parsed.data.balance);
+    await logAudit(req.userId!, "GAME_BALANCE_SYNCED", {
+      targetType: "UserGame",
+      targetId: req.params.id,
+      meta: { userId: before?.userId, from: Number(before?.balance ?? 0), to: parsed.data.balance },
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+const credentialsSchema = z.object({ gameUsername: z.string().min(1).max(100), gamePassword: z.string().min(1).max(100) });
+
+agentRouter.put("/game-accounts/:id/credentials", async (req: AuthedRequest, res) => {
+  const parsed = credentialsSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Username and password are required." });
+  try {
+    await updateCredentials(req.params.id, parsed.data.gameUsername, parsed.data.gamePassword);
+    await logAudit(req.userId!, "GAME_CREDENTIALS_UPDATED", { targetType: "UserGame", targetId: req.params.id });
+    res.json({ ok: true });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+// ------------------------------------------------------------------------------------------
+// Ledger and activity
+// ------------------------------------------------------------------------------------------
+
+// "Recharge Ledger": wallet deposits/cashouts, or game loads/redeems.
 agentRouter.get("/ledger", async (req, res) => {
-  const type = req.query.type === "REDEEM" ? "CASHOUT" : "DEPOSIT";
+  const map: Record<string, Prisma.TransactionWhereInput["type"]> = {
+    DEPOSIT: "DEPOSIT",
+    REDEEM: "CASHOUT",
+    GAME_RECHARGE: "GAME_RECHARGE",
+    GAME_REDEEM: "GAME_REDEEM",
+  };
+  const type = map[String(req.query.type)] ?? "DEPOSIT";
   const transactions = await prisma.transaction.findMany({
     where: { type },
     orderBy: { createdAt: "desc" },

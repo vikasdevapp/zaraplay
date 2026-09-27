@@ -32,6 +32,32 @@ enum TransactionType {
   ADMIN_ADJUSTMENT
   MARKETPLACE_REDEMPTION
   ROULETTE_WIN
+  // Wallet -> game credits (debited when requested, refunded if the agent rejects it).
+  GAME_RECHARGE
+  // Game credits -> wallet (credited when the agent confirms the redeem).
+  GAME_REDEEM
+}
+
+enum GameAccountStatus {
+  // Waiting for an agent to create the account on the game's own platform.
+  PENDING
+  ACTIVE
+  // Account creation was rejected; the player can request it again.
+  REJECTED
+}
+
+enum GameRequestType {
+  CREATE_ACCOUNT
+  RECHARGE
+  REDEEM
+  PASSWORD_RESET
+}
+
+enum GameRequestStatus {
+  PENDING
+  COMPLETED
+  REJECTED
+  CANCELLED
 }
 
 enum TransactionStatus {
@@ -69,6 +95,10 @@ model User {
 
   wallet        Wallet?
   games         UserGame[]
+  gameRequests  GameRequest[] @relation("GameRequestPlayer")
+  claimedGameRequests GameRequest[] @relation("GameRequestClaimer")
+  handledGameRequests GameRequest[] @relation("GameRequestHandler")
+  syncedGameBalances  UserGame[]    @relation("GameBalanceSyncer")
   transactions  Transaction[]
   chatMessages  ChatMessage[] @relation("UserChats")
   supportReplies ChatMessage[] @relation("SupportReplies")
@@ -143,18 +173,56 @@ model Game {
   userGames UserGame[]
 }
 
+// A player's account on a third-party game platform. Agents create the real account there
+// and enter its credentials here; the balance is our record of the credits in that account,
+// moved by recharges/redeems and re-synced by agents from the game's own back office.
 model UserGame {
-  id           String   @id @default(cuid())
-  userId       String
-  user         User     @relation(fields: [userId], references: [id])
-  gameId       String
-  game         Game     @relation(fields: [gameId], references: [id])
-  gameUsername String
-  gamePassword String
-  balance      Decimal  @default(0) @db.Decimal(12, 2)
-  createdAt    DateTime @default(now())
+  id              String            @id @default(cuid())
+  userId          String
+  user            User              @relation(fields: [userId], references: [id])
+  gameId          String
+  game            Game              @relation(fields: [gameId], references: [id])
+  status          GameAccountStatus @default(ACTIVE)
+  // Null until an agent has created the account on the game platform.
+  gameUsername    String?
+  gamePassword    String?
+  balance         Decimal           @default(0) @db.Decimal(12, 2)
+  balanceSyncedAt DateTime?
+  balanceSyncedById String?
+  balanceSyncedBy User?             @relation("GameBalanceSyncer", fields: [balanceSyncedById], references: [id])
+  createdAt       DateTime          @default(now())
+  requests        GameRequest[]
 
   @@unique([userId, gameId])
+}
+
+// The agents' work queue: every change to a game account goes through one of these.
+model GameRequest {
+  id             String            @id @default(cuid())
+  userId         String
+  user           User              @relation("GameRequestPlayer", fields: [userId], references: [id])
+  userGameId     String
+  userGame       UserGame          @relation(fields: [userGameId], references: [id])
+  type           GameRequestType
+  status         GameRequestStatus @default(PENDING)
+  // RECHARGE / CREATE_ACCOUNT: credits to load (already taken from the wallet).
+  // REDEEM: credits the player asked for; completedAmount is what the agent actually redeemed.
+  amount         Decimal           @default(0) @db.Decimal(12, 2)
+  completedAmount Decimal?         @db.Decimal(12, 2)
+  // The wallet ledger row this request moves money through (GAME_RECHARGE / GAME_REDEEM).
+  transactionId  String?           @unique
+  // An agent claims a request before working it, so two agents never load the same credits.
+  claimedById    String?
+  claimedBy      User?             @relation("GameRequestClaimer", fields: [claimedById], references: [id])
+  claimedAt      DateTime?
+  handledById    String?
+  handledBy      User?             @relation("GameRequestHandler", fields: [handledById], references: [id])
+  agentNote      String?
+  createdAt      DateTime          @default(now())
+  completedAt    DateTime?
+
+  @@index([status, createdAt])
+  @@index([userGameId, status])
 }
 
 model SupportAgent {

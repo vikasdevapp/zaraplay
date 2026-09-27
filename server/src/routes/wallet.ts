@@ -81,12 +81,20 @@ const depositSchema = z.object({
   amount: z.number().positive().max(1000000),
   wayCode: z.string().max(30).optional(),
   deviceId: z.string().max(200).optional(),
+  // Deposit straight into a game: once the deposit completes it's loaded into this account.
+  userGameId: z.string().max(40).optional(),
 });
 
 walletRouter.post("/deposit", async (req: AuthedRequest, res) => {
   const parsed = depositSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid deposit amount." });
-  const { wayCode, deviceId } = parsed.data;
+  const { wayCode, deviceId, userGameId } = parsed.data;
+  let gameLoad: { userGameId: string } | undefined;
+  if (userGameId) {
+    const ug = await prisma.userGame.findFirst({ where: { id: userGameId, userId: req.userId!, status: { in: ["PENDING", "ACTIVE"] } } });
+    if (!ug) return res.status(400).json({ error: "That game account isn't available." });
+    gameLoad = { userGameId: ug.id };
+  }
   // Whole cents only, so the DB amount and the gateway's integer-cents amount always agree.
   const amount = Math.round(parsed.data.amount * 100) / 100;
 
@@ -141,7 +149,7 @@ walletRouter.post("/deposit", async (req: AuthedRequest, res) => {
         status: "PENDING",
         payoutAmount: bonus.amount,
         gatewayProvider: PROVIDER,
-        meta: { bonusKind: bonus.kind, bonusPercent: bonus.percent, isFirstDeposit, wayCode: method },
+        meta: { bonusKind: bonus.kind, bonusPercent: bonus.percent, isFirstDeposit, wayCode: method, ...(gameLoad ? { gameLoad } : {}) },
       },
     });
 
@@ -179,7 +187,7 @@ walletRouter.post("/deposit", async (req: AuthedRequest, res) => {
       amount,
       status: "PENDING",
       payoutAmount: bonus.amount,
-      meta: { bonusKind: bonus.kind, bonusPercent: bonus.percent, isFirstDeposit },
+      meta: { bonusKind: bonus.kind, bonusPercent: bonus.percent, isFirstDeposit, ...(gameLoad ? { gameLoad } : {}) },
     },
   });
 
@@ -377,13 +385,14 @@ walletRouter.post("/cashout", async (req: AuthedRequest, res) => {
   // The full requested amount is held immediately (payout + forfeited both leave the
   // spendable balance) so the same funds can't be cashed out twice while pending review.
   // Approval just finalizes the hold; rejection refunds it.
+  // Conditional decrement: two simultaneous cashouts can't both pass the balance check above.
   const result = await prisma.$transaction(async (tx) => {
-    const w = await tx.wallet.update({
-      where: { userId: req.userId! },
-      data: fromFreePlay
-        ? { freePlay: { decrement: amount } }
-        : { balance: { decrement: amount } },
+    const held = await tx.wallet.updateMany({
+      where: fromFreePlay ? { userId: req.userId!, freePlay: { gte: amount } } : { userId: req.userId!, balance: { gte: amount } },
+      data: fromFreePlay ? { freePlay: { decrement: amount } } : { balance: { decrement: amount } },
     });
+    if (!held.count) return null;
+    const w = await tx.wallet.findUniqueOrThrow({ where: { userId: req.userId! } });
     const transaction = await tx.transaction.create({
       data: {
         userId: req.userId!,
@@ -398,6 +407,7 @@ walletRouter.post("/cashout", async (req: AuthedRequest, res) => {
     });
     return { wallet: w, transaction };
   });
+  if (!result) return res.status(400).json({ error: "Cashout amount exceeds available balance." });
 
   res.json({
     wallet: result.wallet,

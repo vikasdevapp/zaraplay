@@ -18,6 +18,7 @@ import { adminMarketplaceRouter } from "./marketplace";
 import { adminRouletteRouter } from "./roulette";
 import { adminPaymentGatewayRouter } from "./paymentGateway";
 import { adminSupportTeamRouter } from "./supportTeam";
+import { adminAgentTeamRouter } from "./agentTeam";
 
 export const adminRouter = Router();
 
@@ -33,6 +34,7 @@ adminRouter.use("/games", adminGamesRouter);
 adminRouter.use("/users", adminUsersRouter);
 adminRouter.use("/cashouts", adminCashoutsRouter);
 adminRouter.use("/support-team", adminSupportTeamRouter);
+adminRouter.use("/agent-team", adminAgentTeamRouter);
 adminRouter.use("/broadcast", adminBroadcastRouter);
 adminRouter.use("/stats", adminStatsRouter);
 adminRouter.use("/transactions", adminTransactionsRouter);

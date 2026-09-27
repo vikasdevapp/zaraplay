@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, FormEvent, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import CheckoutModal from "@/components/CheckoutModal";
+import { getDeviceId } from "@/lib/device";
 import { useApi, useAuth } from "@/context/AuthContext";
 import { ApiError } from "@/lib/api";
 
@@ -25,21 +26,9 @@ interface Transaction {
   meta?: { cashierUrl?: string; expireTimestamp?: number; payout?: { wayCode: string; account: string } } | null;
 }
 
-// Stable per-browser id the gateway uses for fraud checks and payment success rate. Falls
-// back to a fresh id each time if storage is unavailable (private mode, blocked storage).
-function getDeviceId() {
-  try {
-    let id = localStorage.getItem("zp_device_id");
-    if (!id) {
-      // randomUUID needs a secure context (HTTPS/localhost); the site may be served over plain HTTP.
-      id = typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
-      localStorage.setItem("zp_device_id", id);
-    }
-    return id;
-  } catch {
-    return undefined;
-  }
-}
+// Wallet ledger rows that take money out of the wallet.
+const DEBIT_TYPES = new Set(["CASHOUT", "GAME_RECHARGE"]);
+const TX_LABELS: Record<string, string> = { GAME_RECHARGE: "Loaded to game", GAME_REDEEM: "Redeemed from game" };
 
 interface PaymentOptions {
   deposit: { gateway: boolean; methods: string[] };
@@ -503,7 +492,7 @@ function WalletContent() {
               <div key={t.id} className="flex items-center justify-between py-2 text-sm">
                 <div>
                   <p className="font-medium">
-                    {t.type.replace(/_/g, " ")}{" "}
+                    {TX_LABELS[t.type] || t.type.replace(/_/g, " ")}{" "}
                     {t.status !== "COMPLETED" && (
                       <span
                         className={`ml-1 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded ${
@@ -540,9 +529,12 @@ function WalletContent() {
                     </p>
                   )}
                 </div>
-                <p className={t.type === "CASHOUT" ? "text-red-400" : "text-green-400"}>
-                  {t.type === "CASHOUT" ? "-" : "+"}${Number(t.amount).toFixed(2)}
-                </p>
+                <div className="text-right">
+                  <p className={`${DEBIT_TYPES.has(t.type) ? "text-red-400" : "text-green-400"} ${t.status === "REJECTED" ? "line-through opacity-60" : ""}`}>
+                    {DEBIT_TYPES.has(t.type) ? "-" : "+"}${Number(t.amount).toFixed(2)}
+                  </p>
+                  {t.status === "REJECTED" && DEBIT_TYPES.has(t.type) && <p className="text-[10px] text-muted">Returned to wallet</p>}
+                </div>
               </div>
             ))}
           </div>
