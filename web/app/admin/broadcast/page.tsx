@@ -11,6 +11,8 @@ interface Broadcast {
   subject: string | null;
   body: string;
   recipientCount: number;
+  deliveredCount: number;
+  failedCount: number;
   createdAt: string;
 }
 
@@ -85,7 +87,7 @@ export default function AdminBroadcastPage() {
         <p className="text-xs text-muted">
           {channel === "SMS" && "Sends to all phone-verified users via Twilio (falls back to a server log if Twilio isn't configured)."}
           {channel === "PUSH" && "Sends to every browser subscribed to push notifications."}
-          {channel === "EMAIL" && "Sends to all users. No bulk email provider is configured yet — this records the send for review rather than actually delivering it."}
+          {channel === "EMAIL" && "Emails every player who hasn't unsubscribed, via Amazon SES. It sends in the background; each email includes an unsubscribe link."}
         </p>
         {message && <p className={`text-sm ${message.type === "error" ? "text-red-400" : "text-green-400"}`}>{message.text}</p>}
         <button type="submit" className="btn-primary" disabled={busy}>
@@ -102,7 +104,17 @@ export default function AdminBroadcastPage() {
                 <p className="font-medium text-sm">
                   {b.channel === "EMAIL" ? "📧" : b.channel === "SMS" ? "📱" : "🔔"} {b.subject || b.body.slice(0, 40)}
                 </p>
-                <p className="text-xs text-muted">{b.recipientCount} recipients</p>
+                <p className="text-xs text-muted text-right">
+                  {b.recipientCount} recipients
+                  {b.channel === "EMAIL" && (
+                    <>
+                      {" · "}
+                      <span className="text-green-400">{b.deliveredCount} sent</span>
+                      {b.failedCount > 0 && <span className="text-red-400"> · {b.failedCount} failed</span>}
+                      {b.deliveredCount + b.failedCount < b.recipientCount && <span> · sending…</span>}
+                    </>
+                  )}
+                </p>
               </div>
               <p className="text-xs text-muted">{new Date(b.createdAt).toLocaleString()}</p>
             </div>

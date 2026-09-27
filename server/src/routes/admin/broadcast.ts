@@ -5,6 +5,8 @@ import { AuthedRequest } from "../../middleware/auth";
 import { logAudit } from "../../lib/audit";
 import { sendSms } from "../../lib/sms";
 import { sendPushBroadcast, isPushConfigured } from "../../lib/webpush";
+import { isEmailConfigured } from "../../lib/email";
+import { emailBroadcastRecipients, runEmailBroadcast } from "../../lib/emailBroadcast";
 
 export const adminBroadcastRouter = Router();
 
@@ -20,8 +22,8 @@ const sendSchema = z.object({
 });
 
 // SMS delivers for real via Twilio when configured (lib/sms.ts falls back to a console log
-// otherwise). PUSH delivers for real via Web Push when VAPID keys are configured. EMAIL still
-// just records the send — no bulk email provider (SendGrid/SES) is wired up, see README.
+// otherwise). PUSH delivers for real via Web Push when VAPID keys are configured. EMAIL goes
+// out through SES (lib/email.ts) in the background, to players who haven't unsubscribed.
 adminBroadcastRouter.post("/", async (req: AuthedRequest, res) => {
   const parsed = sendSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid input." });
@@ -51,13 +53,19 @@ adminBroadcastRouter.post("/", async (req: AuthedRequest, res) => {
     recipientCount = await sendPushBroadcast({ title: subject || "Zara Plays", body });
     if (!isPushConfigured()) note = "Push notifications not configured yet — recorded only, not actually delivered.";
   } else {
-    recipientCount = await prisma.user.count({ where: { role: "USER" } });
-    note = "Provider not configured — recorded only, not actually delivered.";
+    recipientCount = (await emailBroadcastRecipients()).length;
+    note = isEmailConfigured()
+      ? "Sending in the background — refresh to see delivery progress."
+      : "Email (SMTP) is not configured — messages go to a test inbox, not real users.";
   }
 
   const broadcast = await prisma.broadcastMessage.create({
     data: { channel, subject: subject || null, body, recipientCount },
   });
+
+  if (channel === "EMAIL") {
+    runEmailBroadcast(broadcast.id, subject!, body).catch((err) => console.error(`[broadcast ${broadcast.id}] failed:`, err));
+  }
 
   await logAudit(req.userId!, "BROADCAST_SENT", { targetType: "BroadcastMessage", targetId: broadcast.id, meta: { channel, recipientCount } });
   res.status(201).json({ broadcast, note });

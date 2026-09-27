@@ -17,6 +17,7 @@ import { rouletteRouter } from "./routes/roulette";
 import { phoneRouter } from "./routes/phone";
 import { pushRouter } from "./routes/push";
 import { leaderboardRouter } from "./routes/leaderboard";
+import { emailRouter } from "./routes/email";
 import { paymentsRouter } from "./routes/payments";
 import { startPaymentReconciler } from "./jobs/paymentReconciler";
 import { startCashoutTimeoutSweeper } from "./jobs/cashoutTimeoutSweeper";
@@ -70,6 +71,7 @@ app.use("/api/roulette", rouletteRouter);
 app.use("/api/phone", phoneRouter);
 app.use("/api/push", pushRouter);
 app.use("/api/leaderboard", leaderboardRouter);
+app.use("/api/email", emailRouter);
 
 app.use((_req, res) => res.status(404).json({ error: "Not found." }));
 

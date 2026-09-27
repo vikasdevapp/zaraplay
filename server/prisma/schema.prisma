@@ -54,6 +54,8 @@ model User {
   passwordHash  String
   phone         String?
   phoneVerified Boolean  @default(false)
+  // Set from the unsubscribe link in broadcast emails; OTP and account emails still go out.
+  emailOptOut   Boolean  @default(false)
   role          Role     @default(USER)
   avatarUrl     String?
 
@@ -184,6 +186,9 @@ model BroadcastMessage {
   subject        String?
   body           String
   recipientCount Int
+  // Email broadcasts send in the background; these count up as each message is attempted.
+  deliveredCount Int              @default(0)
+  failedCount    Int              @default(0)
   createdAt      DateTime         @default(now())
 }
 

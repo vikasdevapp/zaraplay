@@ -7,7 +7,7 @@ import { prisma } from "../lib/prisma";
 import { redis, pendingSignupKey, signupIpKey } from "../lib/redis";
 import { limitSignupsByIp, recordSuccessfulSignupIp, getClientIp } from "../middleware/ipLimit";
 import { getPlatformSettings } from "../lib/settings";
-import { sendOtpEmail } from "../lib/email";
+import { emailDomainAcceptsMail, sendOtpEmail } from "../lib/email";
 import { sendOtpSms } from "../lib/sms";
 import { issueSession, getSession, clearSession, verifyRefreshToken } from "../lib/tokens";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
@@ -61,6 +61,12 @@ authRouter.post("/signup", limitSignupsByIp, async (req, res) => {
   });
   if (existing) {
     return res.status(409).json({ error: "An account with that email or username already exists." });
+  }
+
+  // The account is only created once the emailed code is entered, so a fake address can never
+  // finish signup; this just stops obviously undeliverable ones before sending anything.
+  if (!(await emailDomainAcceptsMail(email))) {
+    return res.status(400).json({ error: "This email address can't receive mail. Please use a real email address." });
   }
 
   let referredById: string | undefined;
