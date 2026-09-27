@@ -315,6 +315,8 @@ authRouter.post("/forgot-password", async (req, res) => {
       await sendOtpEmail(user.email, otp);
     } catch (err) {
       console.error("Failed to send reset email:", err);
+      await redis.del(forgotPasswordKey(resetToken));
+      return res.status(502).json({ error: "Could not send the reset email. Please try again in a few minutes." });
     }
   } else {
     // SMS send

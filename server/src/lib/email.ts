@@ -56,6 +56,9 @@ export async function sendEmail(opts: {
 }): Promise<{ previewUrl: string | false }> {
   const transporter = await getTransporter();
   const info = await transporter.sendMail({ from: FROM, ...opts });
+  // Masked recipient + provider message id: enough to trace a "didn't arrive" report in SES.
+  const masked = opts.to.replace(/^(.{2}).*(@.*)$/, "$1***$2");
+  console.log(`[email] ${isEmailConfigured() ? "sent via SMTP" : "sent to TEST inbox (not delivered)"} to ${masked} id=${info.messageId}`);
   return { previewUrl: isEmailConfigured() ? false : nodemailer.getTestMessageUrl(info) };
 }
 
