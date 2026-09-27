@@ -60,6 +60,22 @@ enum GameRequestStatus {
   CANCELLED
 }
 
+// Agent Desk credit ledger (mirrors the game distributor panel's Recharge / Bonus / Redeem / Free Play).
+enum GameTxType {
+  RECHARGE
+  BONUS
+  REDEEM
+  FREEPLAY
+}
+
+// PAGE / PERSONAL: the player paid the agent outside this site (social page or the agent
+// personally), so the wallet is untouched. WEB: done through the website (wallet-funded).
+enum GameTxSource {
+  PAGE
+  PERSONAL
+  WEB
+}
+
 enum TransactionStatus {
   PENDING
   COMPLETED
@@ -99,6 +115,9 @@ model User {
   claimedGameRequests GameRequest[] @relation("GameRequestClaimer")
   handledGameRequests GameRequest[] @relation("GameRequestHandler")
   syncedGameBalances  UserGame[]    @relation("GameBalanceSyncer")
+  createdGameAccounts UserGame[]    @relation("GameAccountCreator")
+  gameTransactions    GameTransaction[] @relation("GameTxStaff")
+  backendTopUps       BackendTopUp[]
   transactions  Transaction[]
   chatMessages  ChatMessage[] @relation("UserChats")
   supportReplies ChatMessage[] @relation("SupportReplies")
@@ -170,7 +189,15 @@ model Game {
   isActive  Boolean    @default(true)
   sortOrder Int        @default(0)
   createdAt DateTime   @default(now())
+  // Credits left on our distributor backend for this game, kept by agents: loads and bonuses
+  // take from it, redeems return to it, top-ups add to it, and a manual update corrects it.
+  backendBalance   Decimal   @default(0) @db.Decimal(14, 2)
+  // Dashboard warns when backendBalance falls to or below this (0 = no warning).
+  backendLowAt     Decimal   @default(0) @db.Decimal(14, 2)
+  backendUpdatedAt DateTime?
   userGames UserGame[]
+  transactions GameTransaction[]
+  topUps       BackendTopUp[]
 }
 
 // A player's account on a third-party game platform. Agents create the real account there
@@ -178,8 +205,13 @@ model Game {
 // moved by recharges/redeems and re-synced by agents from the game's own back office.
 model UserGame {
   id              String            @id @default(cuid())
-  userId          String
-  user            User              @relation(fields: [userId], references: [id])
+  // Null for accounts an agent created for a player who isn't registered on the website.
+  userId          String?
+  user            User?             @relation(fields: [userId], references: [id])
+  // Agent-entered name for unregistered players (e.g. their social profile name).
+  playerName      String?
+  createdById     String?
+  createdBy       User?             @relation("GameAccountCreator", fields: [createdById], references: [id])
   gameId          String
   game            Game              @relation(fields: [gameId], references: [id])
   status          GameAccountStatus @default(ACTIVE)
@@ -192,8 +224,11 @@ model UserGame {
   balanceSyncedBy User?             @relation("GameBalanceSyncer", fields: [balanceSyncedById], references: [id])
   createdAt       DateTime          @default(now())
   requests        GameRequest[]
+  transactions    GameTransaction[]
 
   @@unique([userId, gameId])
+  // A login exists once per game platform.
+  @@unique([gameId, gameUsername])
 }
 
 // The agents' work queue: every change to a game account goes through one of these.
@@ -367,4 +402,47 @@ model PushSubscription {
   p256dh    String
   auth      String
   createdAt DateTime @default(now())
+}
+
+// One credit movement on a game account, by an agent (PAGE / PERSONAL) or from the website (WEB).
+model GameTransaction {
+  id            String        @id @default(cuid())
+  type          GameTxType
+  source        GameTxSource
+  gameId        String
+  game          Game          @relation(fields: [gameId], references: [id])
+  userGameId    String
+  userGame      UserGame      @relation(fields: [userGameId], references: [id])
+  // Snapshots, so the ledger reads right even if the login is later corrected.
+  gameUsername  String
+  amount        Decimal       @db.Decimal(12, 2)
+  // Recorded game balance after this movement.
+  balanceAfter  Decimal       @db.Decimal(12, 2)
+  staffId       String?
+  staff         User?         @relation("GameTxStaff", fields: [staffId], references: [id])
+  // WEB rows: the website request they came from.
+  gameRequestId String?
+  note          String?
+  createdAt     DateTime      @default(now())
+
+  @@index([type, createdAt])
+  @@index([gameId, createdAt])
+  @@index([staffId, createdAt])
+  @@index([userGameId, createdAt])
+}
+
+// Credits bought for a game's distributor backend (manual counterpart of "auto recharge").
+model BackendTopUp {
+  id        String   @id @default(cuid())
+  gameId    String
+  game      Game     @relation(fields: [gameId], references: [id])
+  amount    Decimal  @db.Decimal(14, 2)
+  // Backend balance right after the top-up.
+  balanceAfter Decimal @db.Decimal(14, 2)
+  note      String?
+  staffId   String
+  staff     User     @relation(fields: [staffId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@index([gameId, createdAt])
 }

@@ -1,83 +1,108 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import AgentShell from "@/components/AgentShell";
 import { useApi } from "@/context/AuthContext";
+import { DeskFilters, FilterState, Pager, PageSizeSelect, emptyFilters } from "@/components/desk/DeskFilters";
+import { useDeskMeta } from "@/components/desk/useDeskMeta";
+import { dayRangeParams, money } from "@/lib/desk";
 
-interface Transaction {
+interface TopUp {
   id: string;
   amount: string;
-  status: string;
+  balanceAfter: string;
+  note: string | null;
   createdAt: string;
-  user: { id: string; fullName: string; username: string };
+  game: { name: string };
+  staff: { username: string };
 }
 
-const TABS = [
-  ["DEPOSIT", "Wallet deposits"],
-  ["REDEEM", "Wallet cashouts"],
-  ["GAME_RECHARGE", "Game loads"],
-  ["GAME_REDEEM", "Game redeems"],
-] as const;
-type Tab = (typeof TABS)[number][0];
-
-export default function AgentLedgerPage() {
+export default function AgentBackendLedgerPage() {
   const api = useApi();
-  const [tab, setTab] = useState<Tab>("DEPOSIT");
-  const [rows, setRows] = useState<Transaction[]>([]);
+  const { games, staff } = useDeskMeta();
+  const [filters, setFilters] = useState<FilterState>(emptyFilters);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [rows, setRows] = useState<TopUp[]>([]);
+  const [total, setTotal] = useState(0);
+  const [totalAmount, setTotalAmount] = useState(0);
 
-  const load = useCallback(
-    async (t: string) => {
-      const res = await api<{ transactions: Transaction[] }>(`/api/agent/ledger?type=${t}`);
-      setRows(res.transactions);
-    },
-    [api]
-  );
+  const load = useCallback(async () => {
+    const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+    if (filters.gameId) params.set("gameId", filters.gameId);
+    if (filters.staffId) params.set("staffId", filters.staffId);
+    dayRangeParams(filters.from, filters.to, params);
+    const r = await api<{ rows: TopUp[]; total: number; totalAmount: number }>(`/api/agent/desk/topups?${params}`);
+    setRows(r.rows);
+    setTotal(r.total);
+    setTotalAmount(r.totalAmount);
+  }, [api, filters, page, pageSize]);
 
   useEffect(() => {
-    load(tab).catch(() => {});
-  }, [tab, load]);
-
-  // Pending and rejected rows haven't moved money (rejected loads were refunded).
-  const total = rows.filter((r) => r.status === "COMPLETED").reduce((sum, r) => sum + Number(r.amount), 0);
+    const t = setTimeout(() => load().catch(() => {}), 250);
+    return () => clearTimeout(t);
+  }, [load]);
 
   return (
     <AgentShell>
-      <h1 className="text-2xl font-bold mb-6">Ledger</h1>
+      <h1 className="text-2xl font-bold">Recharge Ledger</h1>
+      <p className="text-sm text-muted mb-6">
+        Credits bought for each game&apos;s backend. Record new top-ups from <Link href="/agent/game-balances" className="text-primary underline">Games Balance</Link>.
+      </p>
 
-      <div className="flex flex-wrap gap-2 mb-4">
-        {TABS.map(([key, label]) => (
-          <button
-            key={key}
-            onClick={() => setTab(key)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium ${tab === key ? "bg-primary text-white" : "bg-surface2 text-muted"}`}
-          >
-            {label}
-          </button>
-        ))}
+      <div className="card mb-4 space-y-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <h2 className="font-bold">Backend Top-ups</h2>
+          <PageSizeSelect
+            value={pageSize}
+            onChange={(n) => {
+              setPageSize(n);
+              setPage(1);
+            }}
+          />
+        </div>
+        <DeskFilters
+          value={filters}
+          onChange={(f) => {
+            setFilters({ ...f, search: "", source: "" });
+            setPage(1);
+          }}
+          games={games}
+          staff={staff}
+          count={total}
+          countLabel="top-ups found"
+          extra={<span className="font-semibold">Total: {money(totalAmount)}</span>}
+        />
       </div>
 
-      <div className="card mb-4">
-        <p className="text-muted text-xs mb-1">Completed total · {TABS.find(([k]) => k === tab)?.[1]} (last 100)</p>
-        <p className="text-2xl font-extrabold text-primary">${total.toFixed(2)}</p>
-        <p className="text-xs text-muted">{rows.length} rows</p>
-      </div>
-
-      <div className="card p-0 divide-y divide-border">
-        {rows.map((r) => (
-          <div key={r.id} className="flex items-center justify-between px-4 py-3 text-sm">
-            <div>
-              <p className="font-medium">
-                {r.user.fullName} <span className="text-muted">@{r.user.username}</span>
-              </p>
-              <p className="text-xs text-muted">{new Date(r.createdAt).toLocaleString()}</p>
-            </div>
-            <div className="text-right">
-              <p className="font-semibold">${Number(r.amount).toFixed(2)}</p>
-              {r.status !== "COMPLETED" && <p className="text-[10px] text-muted uppercase">{r.status}</p>}
-            </div>
-          </div>
-        ))}
-        {rows.length === 0 && <p className="text-muted text-sm text-center py-8">No rows.</p>}
+      <div className="card p-0 overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs text-muted border-b border-border">
+              <th className="px-4 py-3 font-medium">Date</th>
+              <th className="px-3 py-3 font-medium">Game</th>
+              <th className="px-3 py-3 font-medium text-right">Amount</th>
+              <th className="px-3 py-3 font-medium text-right">Backend after</th>
+              <th className="px-3 py-3 font-medium">Staff</th>
+              <th className="px-4 py-3 font-medium">Note</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {rows.map((r) => (
+              <tr key={r.id}>
+                <td className="px-4 py-2.5 text-xs text-muted whitespace-nowrap">{new Date(r.createdAt).toLocaleString()}</td>
+                <td className="px-3 py-2.5">{r.game.name}</td>
+                <td className="px-3 py-2.5 text-right font-semibold">+{money(r.amount)}</td>
+                <td className="px-3 py-2.5 text-right text-muted">{money(r.balanceAfter)}</td>
+                <td className="px-3 py-2.5">@{r.staff.username}</td>
+                <td className="px-4 py-2.5 text-xs text-muted">{r.note ?? ""}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {rows.length === 0 && <p className="text-muted text-sm text-center py-10">No top-ups recorded.</p>}
+        <Pager page={page} pageSize={pageSize} total={total} onPage={setPage} />
       </div>
     </AgentShell>
   );

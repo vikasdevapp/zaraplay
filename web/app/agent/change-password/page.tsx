@@ -1,13 +1,13 @@
 "use client";
 
-import AdminShell from "@/components/AdminShell";
+import AgentShell from "@/components/AgentShell";
 import ChangePasswordForm from "@/components/ChangePasswordForm";
 
-export default function AdminChangePasswordPage() {
+export default function AgentChangePasswordPage() {
   return (
-    <AdminShell>
+    <AgentShell>
       <h1 className="text-2xl font-bold mb-6">Change Password</h1>
       <ChangePasswordForm />
-    </AdminShell>
+    </AgentShell>
   );
 }

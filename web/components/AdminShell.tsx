@@ -21,7 +21,7 @@ const NAV_ITEMS = [
   { href: "/admin/support", label: "Support", icon: "🎧" },
   { href: "/admin/support-team", label: "Support Team", icon: "🧑‍💼" },
   { href: "/admin/agent-team", label: "Agent Team", icon: "🧑‍🔧" },
-  { href: "/agent/requests", label: "Agent Desk", icon: "📥" },
+  { href: "/agent", label: "Agent Desk", icon: "📥" },
   { href: "/admin/broadcast", label: "Broadcast", icon: "📣" },
   { href: "/admin/platform-rules", label: "Platform Rules", icon: "📜" },
 ];

@@ -4,12 +4,15 @@ import { z } from "zod";
 import { prisma } from "../../lib/prisma";
 import { requireAuth, requireRole, AuthedRequest } from "../../middleware/auth";
 import { logAudit } from "../../lib/audit";
+import { deskRouter } from "./desk";
 import { GameError, claimRequest, completeRequest, rejectRequest, releaseRequest, syncBalance, updateCredentials } from "../../lib/gameAccounts";
 
 export const agentRouter = Router();
 
 // AGENT is the day-to-day operations role; ADMIN/MASTER_ADMIN can also work this dashboard.
 agentRouter.use(requireAuth, requireRole("AGENT", "ADMIN", "MASTER_ADMIN"));
+
+agentRouter.use("/desk", deskRouter);
 
 const actorOf = (req: AuthedRequest) => ({ id: req.userId!, role: req.role! });
 

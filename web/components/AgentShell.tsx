@@ -2,25 +2,67 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, ReactNode } from "react";
-import { useAuth } from "@/context/AuthContext";
+import { useEffect, useState, ReactNode } from "react";
+import { useApi, useAuth } from "@/context/AuthContext";
 
-const NAV_ITEMS = [
+interface NavLink {
+  href: string;
+  label: string;
+  icon: string;
+  adminOnly?: boolean;
+  agentOnly?: boolean;
+  badge?: "requests";
+}
+interface NavGroup {
+  label: string;
+  icon: string;
+  children: NavLink[];
+}
+type NavItem = NavLink | NavGroup;
+
+// Mirrors the game distributor panel's menu, plus the website request queue.
+const NAV: NavItem[] = [
   { href: "/agent", label: "Dashboard", icon: "🧭" },
-  { href: "/agent/requests", label: "Requests", icon: "📥" },
-  { href: "/agent/game-records", label: "Game Records", icon: "📄" },
-  { href: "/agent/game-balances", label: "Game Balances", icon: "💰" },
-  { href: "/agent/ledger", label: "Ledger", icon: "🧾" },
-  { href: "/agent/activity", label: "My Activity", icon: "🕓" },
+  { href: "/agent/requests", label: "Website Requests", icon: "📥", badge: "requests" },
+  {
+    label: "Transactions",
+    icon: "🧾",
+    children: [
+      { href: "/agent/transactions", label: "All Transactions", icon: "" },
+      { href: "/agent/transactions/recharge", label: "Recharge", icon: "" },
+      { href: "/agent/transactions/bonus", label: "Bonus", icon: "" },
+      { href: "/agent/transactions/redeem", label: "Redeem", icon: "" },
+      { href: "/agent/transactions/free-play", label: "Free Play (FP)", icon: "" },
+    ],
+  },
+  { href: "/agent/create-account", label: "Create Account", icon: "➕" },
+  { href: "/agent/game-accounts", label: "Game Accounts", icon: "👥" },
+  { href: "/agent/game-balances", label: "Games Balance", icon: "📦" },
+  { href: "/agent/game-records", label: "Game Records", icon: "📊" },
+  {
+    label: "Recharge Ledger",
+    icon: "💲",
+    children: [
+      { href: "/agent/ledger", label: "Backend Top-ups", icon: "" },
+      { href: "/agent/ledger/wallet", label: "Website Wallet", icon: "" },
+    ],
+  },
+  { href: "/admin/agent-team", label: "Staff Management", icon: "🧑‍💼", adminOnly: true },
+  { href: "/agent/staff-activity", label: "Staff Activity", icon: "📋", adminOnly: true },
+  { href: "/agent/activity", label: "My Activity", icon: "🕓", agentOnly: true },
+  { href: "/agent/change-password", label: "Change Password", icon: "🔒" },
 ];
 
 const AGENT_DASHBOARD_ROLES = ["AGENT", "ADMIN", "MASTER_ADMIN"];
 
 export default function AgentShell({ children }: { children: ReactNode }) {
   const { user, loading, logout } = useAuth();
-  const isAdmin = user?.role === "ADMIN" || user?.role === "MASTER_ADMIN";
+  const api = useApi();
   const pathname = usePathname();
   const router = useRouter();
+  const isAdmin = user?.role === "ADMIN" || user?.role === "MASTER_ADMIN";
+  const [pendingRequests, setPendingRequests] = useState(0);
+  const [open, setOpen] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (loading) return;
@@ -28,41 +70,78 @@ export default function AgentShell({ children }: { children: ReactNode }) {
     else if (!AGENT_DASHBOARD_ROLES.includes(user.role)) router.replace("/dashboard");
   }, [loading, user, router]);
 
+  useEffect(() => {
+    if (!user || !AGENT_DASHBOARD_ROLES.includes(user.role)) return;
+    const load = () =>
+      api<{ pendingRequests: number }>("/api/agent/stats")
+        .then((s) => setPendingRequests(s.pendingRequests))
+        .catch(() => {});
+    load();
+    const t = setInterval(load, 30000);
+    return () => clearInterval(t);
+  }, [api, user]);
+
   if (loading || !user || !AGENT_DASHBOARD_ROLES.includes(user.role)) {
+    return <div className="min-h-screen flex items-center justify-center text-muted">Loading…</div>;
+  }
+
+  const visible = (l: NavLink) => (!l.adminOnly || isAdmin) && (!l.agentOnly || !isAdmin);
+  const linkClass = (href: string, sub = false) =>
+    `block shrink-0 ${sub ? "px-3 md:pl-9 py-1.5" : "px-3 py-2"} rounded-lg text-sm font-medium whitespace-nowrap ${
+      pathname === href ? "bg-primary text-white" : "text-muted hover:text-white hover:bg-surface2"
+    }`;
+
+  function renderLink(l: NavLink, sub = false) {
     return (
-      <div className="min-h-screen flex items-center justify-center text-muted">
-        Loading…
-      </div>
+      <Link key={l.href} href={l.href} className={linkClass(l.href, sub)}>
+        {l.icon && `${l.icon} `}
+        {l.label}
+        {l.badge === "requests" && pendingRequests > 0 && (
+          <span className="ml-2 text-[10px] bg-primary text-white rounded-full px-1.5 py-0.5">{pendingRequests}</span>
+        )}
+      </Link>
     );
   }
 
   return (
     <div className="min-h-screen flex flex-col md:flex-row">
-      <aside
-        className="md:w-56 shrink-0 bg-black border-b md:border-b-0 md:border-r border-border md:min-h-screen"
-        style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}
-      >
+      <aside className="md:w-60 shrink-0 bg-black border-b md:border-b-0 md:border-r border-border md:min-h-screen" style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}>
         <div className="px-4 py-4">
           <div className="flex items-center gap-2">
             <span className="w-8 h-8 rounded-lg bg-primary/20 border border-primary flex items-center justify-center text-sm">🧑‍💼</span>
             <span className="font-display font-bold text-lg">Agent Desk</span>
           </div>
-          <p className="text-[10px] tracking-widest text-muted mt-1">ZARA PLAYS · AGENT</p>
+          <p className="text-[10px] tracking-widest text-muted mt-1">ZARA PLAYS · {isAdmin ? "ADMIN" : "AGENT"}</p>
         </div>
+        <p className="hidden md:block px-4 text-[10px] tracking-widest text-muted mb-1">MENU</p>
         <nav className="flex md:flex-col overflow-x-auto md:overflow-visible px-2 pb-2 md:pb-4 gap-1">
-          {NAV_ITEMS.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`shrink-0 px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap ${
-                pathname === item.href ? "bg-primary text-white" : "text-muted hover:text-white hover:bg-surface2"
-              }`}
-            >
-              {item.icon} {item.label}
-            </Link>
-          ))}
+          {NAV.map((item) => {
+            if ("href" in item) return visible(item) ? renderLink(item) : null;
+            const children = item.children.filter(visible);
+            const active = children.some((c) => c.href === pathname);
+            const expanded = open[item.label] ?? active;
+            return (
+              <div key={item.label} className="contents md:block">
+                <button
+                  type="button"
+                  onClick={() => setOpen((o) => ({ ...o, [item.label]: !expanded }))}
+                  className={`hidden md:flex w-full items-center justify-between px-3 py-2 rounded-lg text-sm font-medium ${
+                    active ? "text-white" : "text-muted hover:text-white hover:bg-surface2"
+                  }`}
+                  aria-expanded={expanded}
+                >
+                  <span>
+                    {item.icon} {item.label}
+                  </span>
+                  <span className="text-xs">{expanded ? "▴" : "▾"}</span>
+                </button>
+                {/* Mobile shows sub-pages inline in the scrolling bar; desktop collapses them. */}
+                <div className={`contents ${expanded ? "md:block" : "md:hidden"} md:space-y-0.5`}>{children.map((c) => renderLink({ ...c, label: c.label }, true))}</div>
+              </div>
+            );
+          })}
         </nav>
-        <div className="px-4 pb-3 md:pb-0 md:mt-4 flex md:block items-center justify-between gap-3">
+        <div className="px-4 pb-3 md:pb-0 md:mt-2 flex md:block items-center justify-between gap-3">
           {isAdmin && (
             <Link href="/admin" className="block text-sm text-muted hover:text-white md:mb-3">
               ← Admin panel
@@ -77,7 +156,7 @@ export default function AgentShell({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      <main className="flex-1 px-4 py-6 max-w-6xl w-full mx-auto">{children}</main>
+      <main className="flex-1 min-w-0 px-4 py-6 max-w-7xl w-full mx-auto">{children}</main>
     </div>
   );
 }

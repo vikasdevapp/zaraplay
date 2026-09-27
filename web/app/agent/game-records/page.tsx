@@ -1,173 +1,110 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import AgentShell from "@/components/AgentShell";
 import { useApi } from "@/context/AuthContext";
-import { ApiError } from "@/lib/api";
+import { dayRangeParams, money } from "@/lib/desk";
 
-interface Account {
-  id: string;
-  status: "PENDING" | "ACTIVE";
-  gameUsername: string | null;
-  gamePassword: string | null;
-  balance: string;
-  balanceSyncedAt: string | null;
-  balanceSyncedBy: { username: string } | null;
-  createdAt: string;
-  user: { id: string; fullName: string; username: string };
+interface Record_ {
   game: { id: string; name: string };
-}
-
-function ago(iso: string | null) {
-  if (!iso) return "never";
-  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
-  if (mins < 60) return `${Math.max(mins, 0)}m ago`;
-  if (mins < 1440) return `${Math.floor(mins / 60)}h ago`;
-  return `${Math.floor(mins / 1440)}d ago`;
-}
-
-function AccountRow({ a, onChanged }: { a: Account; onChanged: () => Promise<void> }) {
-  const api = useApi();
-  const [mode, setMode] = useState<"view" | "balance" | "login">("view");
-  const [balance, setBalance] = useState(Number(a.balance).toFixed(2));
-  const [username, setUsername] = useState(a.gameUsername ?? "");
-  const [password, setPassword] = useState(a.gamePassword ?? "");
-  const [showPw, setShowPw] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function save() {
-    setBusy(true);
-    setError(null);
-    try {
-      if (mode === "balance") {
-        await api(`/api/agent/game-accounts/${a.id}/balance`, { method: "POST", body: JSON.stringify({ balance: Number(balance) }) });
-      } else {
-        await api(`/api/agent/game-accounts/${a.id}/credentials`, { method: "PUT", body: JSON.stringify({ gameUsername: username, gamePassword: password }) });
-      }
-      setMode("view");
-      await onChanged();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not save.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const active = a.status === "ACTIVE";
-
-  return (
-    <div className="px-4 py-3 text-sm space-y-2">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <p className="font-medium">
-            {a.user.fullName} <span className="text-muted">@{a.user.username}</span>
-          </p>
-          <p className="text-xs text-muted">
-            {a.game.name} · added {new Date(a.createdAt).toLocaleDateString()}
-            {!active && <span className="ml-1 text-yellow-400">· waiting for account creation</span>}
-          </p>
-        </div>
-        <div className="text-right">
-          <p className="text-primary font-semibold">${Number(a.balance).toFixed(2)}</p>
-          <p className="text-[10px] text-muted">
-            synced {ago(a.balanceSyncedAt)}
-            {a.balanceSyncedBy && ` by @${a.balanceSyncedBy.username}`}
-          </p>
-        </div>
-      </div>
-
-      {active && (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-xs">
-          <span>
-            <span className="text-muted font-sans">ID </span>
-            {a.gameUsername}
-          </span>
-          <span>
-            <span className="text-muted font-sans">PW </span>
-            {showPw ? a.gamePassword : "••••••"}
-            <button className="ml-1 text-primary font-sans" onClick={() => setShowPw((s) => !s)}>
-              {showPw ? "hide" : "show"}
-            </button>
-          </span>
-        </div>
-      )}
-
-      {active && mode === "view" && (
-        <div className="flex gap-2">
-          <button className="btn-ghost text-xs px-2 py-1" onClick={() => {
-              setBalance(Number(a.balance).toFixed(2));
-              setMode("balance");
-            }}>
-            Update balance
-          </button>
-          <button className="btn-ghost text-xs px-2 py-1" onClick={() => {
-              setUsername(a.gameUsername ?? "");
-              setPassword(a.gamePassword ?? "");
-              setMode("login");
-            }}>
-            Edit login
-          </button>
-        </div>
-      )}
-
-      {mode !== "view" && (
-        <div className="flex flex-wrap items-end gap-2">
-          {mode === "balance" ? (
-            <label className="text-xs text-muted">
-              Balance on the game platform right now
-              <input className="input mt-1 w-40" type="number" step="0.01" min="0" value={balance} onChange={(e) => setBalance(e.target.value)} />
-            </label>
-          ) : (
-            <>
-              <input className="input w-44" placeholder="Game username" value={username} onChange={(e) => setUsername(e.target.value)} />
-              <input className="input w-44" placeholder="Game password" value={password} onChange={(e) => setPassword(e.target.value)} />
-            </>
-          )}
-          <button className="btn-primary text-xs px-3 py-2" disabled={busy} onClick={save}>
-            Save
-          </button>
-          <button className="btn-ghost text-xs px-3 py-2" disabled={busy} onClick={() => setMode("view")}>
-            Cancel
-          </button>
-        </div>
-      )}
-      {error && <p className="text-xs text-red-400">{error}</p>}
-    </div>
-  );
+  accounts: number;
+  recharge: number;
+  bonus: number;
+  freeplay: number;
+  redeem: number;
+  transactions: number;
+  net: number;
 }
 
 export default function AgentGameRecordsPage() {
   const api = useApi();
-  const [search, setSearch] = useState("");
-  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [records, setRecords] = useState<Record_[]>([]);
 
   const load = useCallback(async () => {
     const params = new URLSearchParams();
-    if (search.trim()) params.set("search", search.trim());
-    const res = await api<{ accounts: Account[] }>(`/api/agent/game-records?${params}`);
-    setAccounts(res.accounts);
-  }, [api, search]);
+    dayRangeParams(from, to, params);
+    const r = await api<{ records: Record_[] }>(`/api/agent/desk/game-records?${params}`);
+    setRecords(r.records);
+  }, [api, from, to]);
 
   useEffect(() => {
-    const t = setTimeout(() => load().catch(() => {}), 250);
-    return () => clearTimeout(t);
+    load().catch(() => {});
   }, [load]);
+
+  const sum = (k: keyof Omit<Record_, "game">) => records.reduce((n, r) => n + r[k], 0);
 
   return (
     <AgentShell>
-      <h1 className="text-2xl font-bold mb-2">Game Records</h1>
-      <p className="text-sm text-muted mb-4">
-        Every player&apos;s game login. Use <strong>Update balance</strong> after checking their real balance on the game platform, so the player sees the
-        right amount.
-      </p>
-      <input className="input mb-4" placeholder="Search by player username, email or game ID…" value={search} onChange={(e) => setSearch(e.target.value)} />
+      <h1 className="text-2xl font-bold">Game Records</h1>
+      <p className="text-sm text-muted mb-6">Credits given out and taken back per game. Net = recharge + bonus + free play − redeem.</p>
 
-      <div className="card p-0 divide-y divide-border">
-        {accounts.map((a) => (
-          <AccountRow key={a.id} a={a} onChanged={load} />
-        ))}
-        {accounts.length === 0 && <p className="text-muted text-sm text-center py-8">No game accounts found.</p>}
+      <div className="card mb-4 flex flex-wrap items-end gap-3">
+        <label className="text-xs text-muted">
+          From Date
+          <input className="input mt-1" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+        </label>
+        <label className="text-xs text-muted">
+          To Date
+          <input className="input mt-1" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+        </label>
+        <button
+          className="btn-ghost text-xs px-3 py-2"
+          disabled={!from && !to}
+          onClick={() => {
+            setFrom("");
+            setTo("");
+          }}
+        >
+          All time
+        </button>
+      </div>
+
+      <div className="card p-0 overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs text-muted border-b border-border">
+              <th className="px-4 py-3 font-medium">Game</th>
+              <th className="px-3 py-3 font-medium text-right">Accounts</th>
+              <th className="px-3 py-3 font-medium text-right">Recharge</th>
+              <th className="px-3 py-3 font-medium text-right">Bonus</th>
+              <th className="px-3 py-3 font-medium text-right">Free Play</th>
+              <th className="px-3 py-3 font-medium text-right">Redeem</th>
+              <th className="px-3 py-3 font-medium text-right">Net</th>
+              <th className="px-4 py-3 font-medium text-right">Transactions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {records.map((r) => (
+              <tr key={r.game.id}>
+                <td className="px-4 py-2.5 font-medium">{r.game.name}</td>
+                <td className="px-3 py-2.5 text-right">{r.accounts}</td>
+                <td className="px-3 py-2.5 text-right">{money(r.recharge)}</td>
+                <td className="px-3 py-2.5 text-right">{money(r.bonus)}</td>
+                <td className="px-3 py-2.5 text-right">{money(r.freeplay)}</td>
+                <td className="px-3 py-2.5 text-right">{money(r.redeem)}</td>
+                <td className="px-3 py-2.5 text-right font-semibold">{money(r.net)}</td>
+                <td className="px-4 py-2.5 text-right text-muted">{r.transactions}</td>
+              </tr>
+            ))}
+          </tbody>
+          {records.length > 0 && (
+            <tfoot>
+              <tr className="border-t border-border font-semibold">
+                <td className="px-4 py-3">Total</td>
+                <td className="px-3 py-3 text-right">{sum("accounts")}</td>
+                <td className="px-3 py-3 text-right">{money(sum("recharge"))}</td>
+                <td className="px-3 py-3 text-right">{money(sum("bonus"))}</td>
+                <td className="px-3 py-3 text-right">{money(sum("freeplay"))}</td>
+                <td className="px-3 py-3 text-right">{money(sum("redeem"))}</td>
+                <td className="px-3 py-3 text-right">{money(sum("net"))}</td>
+                <td className="px-4 py-3 text-right">{sum("transactions")}</td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+        {records.length === 0 && <p className="text-muted text-sm text-center py-10">No games yet.</p>}
       </div>
     </AgentShell>
   );

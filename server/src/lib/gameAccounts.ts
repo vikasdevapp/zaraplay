@@ -1,4 +1,4 @@
-import { GameRequest, Prisma } from "@prisma/client";
+import { GameRequest, GameTxSource, GameTxType, Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { sendPushToUser } from "./webpush";
 
@@ -34,6 +34,51 @@ type Tx = Prisma.TransactionClient;
 type Actor = { id: string; role: string };
 
 const isAdminRole = (role: string) => role === "ADMIN" || role === "MASTER_ADMIN";
+
+/** A login is unique per game; the database enforces it, this spots the violation. */
+export function isDuplicateLogin(err: unknown) {
+  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002";
+}
+
+/**
+ * Game platforms treat usernames case-insensitively, so "VIP1" and "vip1" are the same login.
+ * (The DB unique index is exact-case; this closes the gap.)
+ */
+export async function assertLoginFree(tx: Tx | typeof prisma, gameId: string, gameUsername: string, exceptUserGameId?: string) {
+  const clash = await tx.userGame.findFirst({
+    where: {
+      gameId,
+      gameUsername: { equals: gameUsername, mode: "insensitive" },
+      ...(exceptUserGameId ? { NOT: { id: exceptUserGameId } } : {}),
+    },
+    select: { id: true },
+  });
+  if (clash) throw new GameError(409, "That game username is already registered for this game.");
+}
+
+/**
+ * Writes one Agent Desk ledger row and moves the game's backend balance: loads, bonuses and
+ * free play draw credits from our backend, redeems return them.
+ */
+export async function recordGameTx(
+  tx: Tx,
+  row: {
+    type: GameTxType;
+    source: GameTxSource;
+    gameId: string;
+    userGameId: string;
+    gameUsername: string;
+    amount: number;
+    balanceAfter: number;
+    staffId: string | null;
+    gameRequestId?: string | null;
+    note?: string | null;
+  }
+) {
+  const delta = row.type === "REDEEM" ? row.amount : -row.amount;
+  await tx.game.update({ where: { id: row.gameId }, data: { backendBalance: { increment: delta } } });
+  return tx.gameTransaction.create({ data: { ...row, note: row.note?.trim() || null } });
+}
 
 /** Cents-exact amount, or an error. */
 export function toMoney(value: number): number {
@@ -249,7 +294,17 @@ export interface CompleteInput {
 }
 
 export async function completeRequest(requestId: string, actor: Actor, input: CompleteInput) {
-  const result = await prisma.$transaction(async (tx) => {
+  const result = await completeInTx(requestId, actor, input).catch((err) => {
+    if (isDuplicateLogin(err)) throw new GameError(409, "That game username is already registered for this game.");
+    throw err;
+  });
+
+  sendPushToUser(result.request.userId, { title: "Zara Plays", body: result.notify }).catch(() => {});
+  return result.request;
+}
+
+function completeInTx(requestId: string, actor: Actor, input: CompleteInput) {
+  return prisma.$transaction(async (tx) => {
     const current = await tx.gameRequest.findUnique({ where: { id: requestId }, include: { userGame: { include: { game: true } } } });
     if (!current) throw new GameError(404, "Request not found.");
     const ug = current.userGame;
@@ -260,8 +315,9 @@ export async function completeRequest(requestId: string, actor: Actor, input: Co
         const username = input.gameUsername?.trim();
         const password = input.gamePassword?.trim();
         if (!username || !password) throw new GameError(400, "Enter the game username and password you created.");
+        await assertLoginFree(tx, ug.gameId, username, ug.id);
         const request = await finishRequest(tx, requestId, actor, { status: "COMPLETED", completedAmount: current.amount, agentNote: note });
-        await tx.userGame.update({
+        const created = await tx.userGame.update({
           where: { id: ug.id },
           data: {
             status: "ACTIVE",
@@ -270,20 +326,45 @@ export async function completeRequest(requestId: string, actor: Actor, input: Co
             balance: { increment: request.amount },
             balanceSyncedAt: new Date(),
             balanceSyncedById: actor.id,
+            createdById: actor.id,
           },
         });
         if (request.transactionId) await tx.transaction.update({ where: { id: request.transactionId }, data: { status: "COMPLETED" } });
+        if (Number(request.amount) > 0) {
+          await recordGameTx(tx, {
+            type: "RECHARGE",
+            source: "WEB",
+            gameId: ug.gameId,
+            userGameId: ug.id,
+            gameUsername: username,
+            amount: Number(request.amount),
+            balanceAfter: Number(created.balance),
+            staffId: actor.id,
+            gameRequestId: request.id,
+          });
+        }
         return { request, notify: `Your ${ug.game.name} account is ready. Open My Games to see your login.` };
       }
 
       case "RECHARGE": {
         if (ug.status !== "ACTIVE") throw new GameError(400, "Create this player's game account first (see their Create Account request).");
         const request = await finishRequest(tx, requestId, actor, { status: "COMPLETED", completedAmount: current.amount, agentNote: note });
-        await tx.userGame.update({
+        const loaded = await tx.userGame.update({
           where: { id: ug.id },
           data: { balance: { increment: request.amount }, balanceSyncedAt: new Date(), balanceSyncedById: actor.id },
         });
         if (request.transactionId) await tx.transaction.update({ where: { id: request.transactionId }, data: { status: "COMPLETED" } });
+        await recordGameTx(tx, {
+          type: "RECHARGE",
+          source: "WEB",
+          gameId: ug.gameId,
+          userGameId: ug.id,
+          gameUsername: ug.gameUsername!,
+          amount: Number(request.amount),
+          balanceAfter: Number(loaded.balance),
+          staffId: actor.id,
+          gameRequestId: request.id,
+        });
         return { request, notify: `${Number(request.amount).toFixed(2)} has been loaded into ${ug.game.name}.` };
       }
 
@@ -315,6 +396,17 @@ export async function completeRequest(requestId: string, actor: Actor, input: Co
           where: { id: ug.id },
           data: { balance: remainingBalance, balanceSyncedAt: new Date(), balanceSyncedById: actor.id },
         });
+        await recordGameTx(tx, {
+          type: "REDEEM",
+          source: "WEB",
+          gameId: ug.gameId,
+          userGameId: ug.id,
+          gameUsername: ug.gameUsername!,
+          amount: redeemedAmount,
+          balanceAfter: remainingBalance,
+          staffId: actor.id,
+          gameRequestId: request.id,
+        });
         return { request, notify: `${redeemedAmount.toFixed(2)} from ${ug.game.name} has been added to your wallet.` };
       }
 
@@ -326,10 +418,8 @@ export async function completeRequest(requestId: string, actor: Actor, input: Co
         return { request, notify: `Your ${ug.game.name} password has been reset. Open My Games to see it.` };
       }
     }
+    throw new GameError(400, "Unknown request type.");
   });
-
-  sendPushToUser(result.request.userId, { title: "Zara Plays", body: result.notify }).catch(() => {});
-  return result.request;
 }
 
 export async function rejectRequest(requestId: string, actor: Actor, reason: string) {
@@ -362,7 +452,15 @@ export async function updateCredentials(userGameId: string, gameUsername: string
   const username = gameUsername.trim();
   const password = gamePassword.trim();
   if (!username || !password) throw new GameError(400, "Username and password are required.");
-  const res = await prisma.userGame.updateMany({ where: { id: userGameId, status: "ACTIVE" }, data: { gameUsername: username, gamePassword: password } });
+  const current = await prisma.userGame.findUnique({ where: { id: userGameId }, select: { gameId: true } });
+  if (!current) throw new GameError(404, "Active game account not found.");
+  await assertLoginFree(prisma, current.gameId, username, userGameId);
+  const res = await prisma.userGame
+    .updateMany({ where: { id: userGameId, status: "ACTIVE" }, data: { gameUsername: username, gamePassword: password } })
+    .catch((err) => {
+      if (isDuplicateLogin(err)) throw new GameError(409, "That game username is already registered for this game.");
+      throw err;
+    });
   if (!res.count) throw new GameError(404, "Active game account not found.");
 }
 
