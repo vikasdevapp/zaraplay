@@ -16,7 +16,7 @@ const GAMES = [
   "Royal Arcade",
 ];
 
-const AGENTS = ["Maya Lin", "Jordan Blake", "Priya Nair"];
+const AGENTS = ["Zara", "Lana", "Sophia"];
 
 const VIP_TIERS = [
   { name: "Bronze", emoji: "🥉", colorHex: "#CD7F32", minDeposit: 0, minReferrals: 0, perks: ["Welcome to Zara Plays"], sortOrder: 0 },
