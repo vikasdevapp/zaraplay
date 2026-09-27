@@ -50,20 +50,21 @@ const METHOD_LABELS: Record<string, string> = {
   cashapp: "Cash App",
   ecashapp: "Cash App",
   zelle: "Zelle",
-  btcpay: "Cash App (BTC)",
+  btcpay: "Cash App Bitcoin",
   paypal: "PayPal",
   applepay: "Apple Pay",
   googlepay: "Google Pay",
-  card: "Card",
+  card: "Credit Card",
   chime: "Chime",
   venmo: "Venmo",
+  ach: "ACH Bank Transfer",
 };
 
 // Cashout method names shown to users (the deposit list uses METHOD_LABELS).
 const PAYOUT_LABELS: Record<string, string> = {
-  card: "Debit card (instant transfer)",
-  ecashapp: "Cash App ($Cashtag)",
-  chime: "Chime ($ChimeSign)",
+  ecashapp: "Cash App (cashtag)",
+  chime: "Chime (chimeSign)",
+  card: "Debit Card (cardNumber, cardValid)",
 };
 
 interface SavedPayoutMethod {
@@ -75,11 +76,8 @@ interface SavedPayoutMethod {
 }
 
 const PAYOUT_PLACEHOLDER: Record<string, string> = {
-  ecashapp: "$Cashtag",
-  chime: "$ChimeSign",
-  paypal: "PayPal email",
-  venmo: "Venmo email",
-  zelle: "Zelle email or phone",
+  ecashapp: "cashtag (jaise $abc123)",
+  chime: "chimeSign ($ se start)",
 };
 
 function WalletContent() {
@@ -92,6 +90,8 @@ function WalletContent() {
   const [payoutAccount, setPayoutAccount] = useState("");
   const [cardNumber, setCardNumber] = useState("");
   const [cardExpiry, setCardExpiry] = useState("");
+  const [accountNumber, setAccountNumber] = useState("");
+  const [routingNumber, setRoutingNumber] = useState("");
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [depositAmount, setDepositAmount] = useState("");
@@ -139,19 +139,28 @@ function WalletContent() {
     setMethodError(null);
     setSavingMethod(true);
     try {
+      let bodyData: Record<string, string> = {};
+      if (payoutMethod === "card") {
+        bodyData = { wayCode: "card", cardNumber, cardExpiry };
+      } else if (payoutMethod === "ach") {
+        bodyData = { wayCode: "ach", accountNumber, routingNumber };
+      } else {
+        bodyData = { wayCode: payoutMethod, account: payoutAccount };
+      }
+
       const { method } = await api<{ method: SavedPayoutMethod }>("/api/wallet/payout-methods", {
         method: "POST",
-        body: JSON.stringify(
-          payoutMethod === "card" ? { wayCode: "card", cardNumber, cardExpiry } : { wayCode: payoutMethod, account: payoutAccount }
-        ),
+        body: JSON.stringify(bodyData),
       });
       setSavedMethods((list) => (list.some((m) => m.id === method.id) ? list : [...list, method]));
       setSelectedMethodId(method.id);
       setAddingMethod(false);
-      // Don't keep card details around in page state after they've been saved.
+      // Don't keep card/bank details around in page state after they've been saved.
       setPayoutAccount("");
       setCardNumber("");
       setCardExpiry("");
+      setAccountNumber("");
+      setRoutingNumber("");
     } catch (err) {
       setMethodError(err instanceof ApiError ? err.message : "Could not save this payout method.");
     } finally {
@@ -394,6 +403,25 @@ function WalletContent() {
                           onChange={(e) => setCardExpiry(e.target.value.replace(/[^\d/]/g, ""))}
                         />
                       </div>
+                    ) : payoutMethod === "ach" ? (
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          className="input"
+                          inputMode="numeric"
+                          placeholder="Account number"
+                          maxLength={17}
+                          value={accountNumber}
+                          onChange={(e) => setAccountNumber(e.target.value.replace(/\D/g, ""))}
+                        />
+                        <input
+                          className="input"
+                          inputMode="numeric"
+                          placeholder="Routing number (9 digits)"
+                          maxLength={9}
+                          value={routingNumber}
+                          onChange={(e) => setRoutingNumber(e.target.value.replace(/\D/g, ""))}
+                        />
+                      </div>
                     ) : (
                       <input
                         className="input"
@@ -404,6 +432,9 @@ function WalletContent() {
                     )}
                     {payoutMethod === "card" && (
                       <p className="text-xs text-muted">Debit card only. We never ask for your CVV or PIN.</p>
+                    )}
+                    {payoutMethod === "ach" && (
+                      <p className="text-xs text-muted">ACH bank transfer requires a valid account & 9-digit routing number.</p>
                     )}
                     {methodError && <p className="text-xs text-red-400">{methodError}</p>}
                     <div className="flex gap-2">

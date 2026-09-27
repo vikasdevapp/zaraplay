@@ -53,6 +53,16 @@ adminCashoutsRouter.post("/:id/approve", async (req: AuthedRequest, res) => {
     } catch {
       return res.status(500).json({ error: "Could not decrypt the card details (check PAYOUT_ENCRYPTION_KEY)." });
     }
+  } else if (payout.wayCode === "ach") {
+    if (!transaction.payoutSecret) {
+      return res.status(400).json({ error: "ACH details are missing for this request." });
+    }
+    try {
+      const parts = openSecret(transaction.payoutSecret).split(":");
+      wayParam = { accountNumber: parts[0], routingNumber: parts[1] || "" };
+    } catch {
+      return res.status(500).json({ error: "Could not decrypt ACH details." });
+    }
   } else {
     const field = TRANSFER_ACCOUNT_FIELD[payout.wayCode];
     if (!field) return res.status(400).json({ error: `Unsupported payout method: ${payout.wayCode}` });
