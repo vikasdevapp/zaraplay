@@ -29,9 +29,13 @@ const MASTER_NAV_ITEMS = [
   { href: "/admin/staff-activity", label: "Staff Activity", icon: "📋" },
 ];
 
-// SUPPORT staff only ever see the support inbox; the API enforces the same rule.
+// Available to every panel role, SUPPORT included.
+const ACCOUNT_NAV_ITEMS = [{ href: "/admin/change-password", label: "Change Password", icon: "🔑" }];
+
+// SUPPORT staff only ever see the support inbox (plus their own password); the API enforces the same rule.
 const SUPPORT_HOME = "/admin/support";
-const SUPPORT_NAV_ITEMS = NAV_ITEMS.filter((item) => item.href === SUPPORT_HOME);
+const SUPPORT_NAV_ITEMS = [...NAV_ITEMS.filter((item) => item.href === SUPPORT_HOME), ...ACCOUNT_NAV_ITEMS];
+const SUPPORT_PATHS = SUPPORT_NAV_ITEMS.map((item) => item.href);
 
 const PANEL_ROLES = ["ADMIN", "MASTER_ADMIN", "SUPPORT"];
 
@@ -41,13 +45,13 @@ export default function AdminShell({ children }: { children: ReactNode }) {
   const router = useRouter();
 
   const isSupport = user?.role === "SUPPORT";
-  const allowed = !!user && PANEL_ROLES.includes(user.role) && (!isSupport || pathname === SUPPORT_HOME);
+  const allowed = !!user && PANEL_ROLES.includes(user.role) && (!isSupport || SUPPORT_PATHS.includes(pathname));
 
   useEffect(() => {
     if (loading) return;
     if (!user) router.replace("/login");
     else if (!PANEL_ROLES.includes(user.role)) router.replace("/dashboard");
-    else if (isSupport && pathname !== SUPPORT_HOME) router.replace(SUPPORT_HOME);
+    else if (isSupport && !SUPPORT_PATHS.includes(pathname)) router.replace(SUPPORT_HOME);
   }, [loading, user, isSupport, pathname, router]);
 
   if (loading || !user || !allowed) {
@@ -58,7 +62,9 @@ export default function AdminShell({ children }: { children: ReactNode }) {
     );
   }
 
-  const navItems = isSupport ? SUPPORT_NAV_ITEMS : user.role === "MASTER_ADMIN" ? [...NAV_ITEMS, ...MASTER_NAV_ITEMS] : NAV_ITEMS;
+  const navItems = isSupport
+    ? SUPPORT_NAV_ITEMS
+    : [...NAV_ITEMS, ...(user.role === "MASTER_ADMIN" ? MASTER_NAV_ITEMS : []), ...ACCOUNT_NAV_ITEMS];
 
   return (
     <div className="min-h-screen flex flex-col md:flex-row">
