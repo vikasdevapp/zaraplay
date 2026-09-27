@@ -85,7 +85,6 @@ function WalletContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [options, setOptions] = useState<PaymentOptions | null>(null);
-  const [depositMethod, setDepositMethod] = useState("");
   const [payoutMethod, setPayoutMethod] = useState("");
   const [payoutAccount, setPayoutAccount] = useState("");
   const [cardNumber, setCardNumber] = useState("");
@@ -122,7 +121,6 @@ function WalletContent() {
     api<PaymentOptions>("/api/wallet/payment-options")
       .then((o) => {
         setOptions(o);
-        setDepositMethod(o.deposit.methods[0] || "");
         setPayoutMethod(o.cashout.methods[0] || "");
       })
       .catch(() => {});
@@ -200,9 +198,11 @@ function WalletContent() {
   async function handleDeposit(e: FormEvent) {
     e.preventDefault();
     setMessage(null);
-    // Gateway deposits pick a method in the checkout sheet first; the order is created from there.
-    if (options?.deposit.gateway && options.deposit.methods.length) {
+    // Gateway deposits: the user picks from the methods that are working right now, fetched
+    // fresh so a channel that just went down isn't offered.
+    if (options?.deposit.gateway) {
       setCheckoutError(null);
+      await refreshPaymentOptions();
       setCheckoutAmount(Number(depositAmount));
       return;
     }
@@ -225,6 +225,14 @@ function WalletContent() {
     }
   }
 
+  async function refreshPaymentOptions() {
+    try {
+      setOptions(await api<PaymentOptions>("/api/wallet/payment-options"));
+    } catch {
+      // keep the list we already have
+    }
+  }
+
   async function payWithGateway(method: string) {
     if (checkoutAmount === null) return;
     setCheckoutError(null);
@@ -235,13 +243,14 @@ function WalletContent() {
         body: JSON.stringify({ amount: checkoutAmount, wayCode: method, deviceId: getDeviceId() }),
       });
       if (res.cashierUrl) {
-        setDepositMethod(method);
         window.location.href = res.cashierUrl;
         return; // keep the sheet in its busy state while the browser navigates away
       }
       setCheckoutError("Could not open the payment page. Please try again.");
     } catch (err) {
       setCheckoutError(err instanceof ApiError ? err.message : "Could not start the payment. Please try again.");
+      // A method the gateway just reported as down drops out of the list.
+      await refreshPaymentOptions();
     }
     setBusy(null);
   }
@@ -544,7 +553,6 @@ function WalletContent() {
         <CheckoutModal
           amount={checkoutAmount}
           methods={options.deposit.methods}
-          initialMethod={depositMethod}
           payerName={user?.username}
           busy={busy === "deposit"}
           error={checkoutError}

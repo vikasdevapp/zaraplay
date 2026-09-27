@@ -9,6 +9,7 @@ import { createPayOrder, gateway, GatewayError, publicIpv4 } from "../lib/gguson
 import { PROVIDER, syncDeposit } from "../lib/paymentSync";
 import { rejectDeposit } from "../utils/deposit";
 import { sealSecret } from "../lib/secretBox";
+import { availablePayMethods, markPayMethodDown } from "../lib/payMethodHealth";
 
 export const walletRouter = Router();
 walletRouter.use(requireAuth);
@@ -28,9 +29,10 @@ walletRouter.get("/transactions", async (req: AuthedRequest, res) => {
   res.json({ transactions });
 });
 
-walletRouter.get("/payment-options", (_req, res) => {
+walletRouter.get("/payment-options", async (_req, res) => {
   res.json({
-    deposit: { gateway: gateway.payEnabled, methods: gateway.payEnabled ? gateway.payWayCodes : [] },
+    // Only methods the gateway hasn't recently reported as unavailable.
+    deposit: { gateway: gateway.payEnabled, methods: gateway.payEnabled ? await availablePayMethods() : [] },
     cashout: {
       gateway: gateway.transferEnabled,
       // Offered even while payouts are manual, so the admin knows where to send the money.
@@ -54,15 +56,21 @@ const PAY_METHOD_LABELS: Record<string, string> = {
 };
 
 // Turns the gateway's rejection into something the user can act on; unknown errors stay generic.
-function depositErrorMessage(err: unknown, method: string) {
+// Gateway rejections that mean the channel itself is down, as opposed to this one order.
+const CHANNEL_DOWN_RE = /maintenance|channel|not (open|available|support)|disabled|closed/i;
+
+function depositErrorMessage(err: unknown, method: string, amount: number) {
   const label = PAY_METHOD_LABELS[method] || "This payment method";
   const others = gateway.payWayCodes.length > 1 ? " or choose another payment method" : "";
   const msg = err instanceof GatewayError ? err.message : "";
   if (/maintenance/i.test(msg)) {
     return `${label} payments are temporarily under maintenance. Please try again later${others}.`;
   }
-  if (/channel|not (open|available|support)|disabled|closed/i.test(msg)) {
+  if (CHANNEL_DOWN_RE.test(msg)) {
     return `${label} payments are currently unavailable. Please try again later${others}.`;
+  }
+  if (/amount/i.test(msg)) {
+    return `${label} doesn't accept a ${amount.toFixed(2)} deposit. Please try a different amount${others}.`;
   }
   // Anything else the gateway reports is passed through so it can be acted on.
   if (msg) return `GGUSOnePay error: ${msg}`;
@@ -100,8 +108,12 @@ walletRouter.post("/deposit", async (req: AuthedRequest, res) => {
   const bonus = calcDepositBonus(amount, isFirstDeposit, settings);
 
   if (gateway.payEnabled) {
-    const method = wayCode || gateway.payWayCodes[0];
-    if (!gateway.payWayCodes.includes(method)) return res.status(400).json({ error: "Unsupported payment method." });
+    // The user always picks the method in the checkout sheet; nothing is chosen for them.
+    const method = wayCode || "";
+    if (!gateway.payWayCodes.includes(method)) return res.status(400).json({ error: "Choose a payment method." });
+    if (!(await availablePayMethods()).includes(method)) {
+      return res.status(409).json({ error: `${PAY_METHOD_LABELS[method] || "This payment method"} is currently unavailable. Please choose another payment method.` });
+    }
 
     // Each order counts against the merchant's test/daily limits, so unpaid ones are capped;
     // the user can resume an open one from their transaction list instead.
@@ -154,7 +166,8 @@ walletRouter.post("/deposit", async (req: AuthedRequest, res) => {
       const message = err instanceof GatewayError ? err.message : "Payment gateway is unavailable.";
       console.error(`[ggusonepay] create pay order failed for ${transaction.id}`, err);
       await rejectDeposit(transaction.id, `Gateway error: ${message}`);
-      return res.status(502).json({ error: depositErrorMessage(err, method) });
+      if (err instanceof GatewayError && CHANNEL_DOWN_RE.test(err.message)) await markPayMethodDown(method);
+      return res.status(502).json({ error: depositErrorMessage(err, method, amount) });
     }
   }
 

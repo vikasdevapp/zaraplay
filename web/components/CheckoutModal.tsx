@@ -23,7 +23,6 @@ const METHOD_INFO: Record<string, { name: string; icon: string; desc: string; ca
 interface Props {
   amount: number;
   methods: string[];
-  initialMethod?: string;
   payerName?: string;
   busy: boolean;
   error: string | null;
@@ -34,18 +33,18 @@ interface Props {
 export default function CheckoutModal({
   amount,
   methods,
-  initialMethod,
   payerName,
   busy,
   error,
   onPay,
   onClose,
 }: Props) {
-  // Use only methods provided by the backend (gateway.payWayCodes)
-  const availableMethods = methods && methods.length > 0 ? methods : ["cashapp"];
-  const [selectedWayCode, setSelectedWayCode] = useState(
-    initialMethod && availableMethods.includes(initialMethod) ? initialMethod : availableMethods[0]
-  );
+  // Only the methods the backend reports as working right now; nothing is preselected —
+  // tapping a method opens the GGUSOnePay page for it straight away.
+  const [pendingMethod, setPendingMethod] = useState<string | null>(null);
+  useEffect(() => {
+    if (!busy) setPendingMethod(null);
+  }, [busy]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -60,16 +59,11 @@ export default function CheckoutModal({
     };
   }, [busy, onClose]);
 
-  function handlePaySubmit() {
-    onPay(selectedWayCode);
+  function pay(wayCode: string) {
+    if (busy) return;
+    setPendingMethod(wayCode);
+    onPay(wayCode);
   }
-
-  const currentInfo = METHOD_INFO[selectedWayCode] || {
-    name: selectedWayCode.toUpperCase(),
-    icon: "💳",
-    desc: `Pay using ${selectedWayCode}`,
-    category: "Payment Method",
-  };
 
   return (
     <div
@@ -131,8 +125,8 @@ export default function CheckoutModal({
           {/* Top Bar */}
           <div className="flex items-center justify-between px-6 py-4 bg-white border-b border-neutral-200 shrink-0">
             <div>
-              <h3 className="font-bold text-neutral-800 text-lg">Select Payment Method</h3>
-              <p className="text-xs text-neutral-500">Only enabled GGUSOnePay channels shown</p>
+              <h3 className="font-bold text-neutral-800 text-lg">Choose how to pay</h3>
+              <p className="text-xs text-neutral-500">Tap a method to continue on the secure GGUSOnePay page</p>
             </div>
             <button
               type="button"
@@ -145,77 +139,52 @@ export default function CheckoutModal({
             </button>
           </div>
 
-          {/* Dynamic Available Methods List */}
           <div className="flex-1 p-6 flex flex-col justify-between bg-white min-w-0 space-y-6 overflow-y-auto">
             <div className="space-y-3">
-              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                Available Gateway Methods ({availableMethods.length})
-              </label>
+              {methods.length === 0 ? (
+                <p className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-4">
+                  No payment methods are available right now. Please try again in a little while.
+                </p>
+              ) : (
+                <div className="grid grid-cols-1 gap-2.5">
+                  {methods.map((wayCode) => {
+                    const info = METHOD_INFO[wayCode] || {
+                      name: wayCode.toUpperCase(),
+                      icon: "💳",
+                      desc: `Pay using ${wayCode}`,
+                    };
+                    const isPending = busy && pendingMethod === wayCode;
 
-              <div className="grid grid-cols-1 gap-2.5">
-                {availableMethods.map((wayCode) => {
-                  const info = METHOD_INFO[wayCode] || {
-                    name: wayCode.toUpperCase(),
-                    icon: "💳",
-                    desc: `Pay using ${wayCode}`,
-                  };
-                  const isSelected = selectedWayCode === wayCode;
-
-                  return (
-                    <button
-                      key={wayCode}
-                      type="button"
-                      onClick={() => setSelectedWayCode(wayCode)}
-                      disabled={busy}
-                      className={`w-full p-4 rounded-xl border text-left flex items-center gap-4 transition-all ${
-                        isSelected
-                          ? "bg-emerald-50/80 border-emerald-500 text-slate-900 shadow-sm ring-1 ring-emerald-500"
-                          : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100 hover:border-slate-300"
-                      }`}
-                    >
-                      <span className="w-10 h-10 rounded-full bg-slate-900 text-white font-bold text-base flex items-center justify-center shrink-0">
-                        {info.icon}
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-bold text-sm text-slate-900 leading-snug">{info.name}</p>
-                        <p className="text-xs text-slate-500 truncate">{info.desc}</p>
-                      </div>
-                      <div
-                        className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 ${
-                          isSelected ? "border-emerald-500 bg-emerald-500 text-white" : "border-slate-300"
+                    return (
+                      <button
+                        key={wayCode}
+                        type="button"
+                        onClick={() => pay(wayCode)}
+                        disabled={busy}
+                        className={`w-full p-4 rounded-xl border text-left flex items-center gap-4 transition-all disabled:cursor-not-allowed ${
+                          isPending
+                            ? "bg-emerald-50/80 border-emerald-500 ring-1 ring-emerald-500"
+                            : "bg-slate-50 border-slate-200 hover:bg-emerald-50/60 hover:border-emerald-400 disabled:opacity-60"
                         }`}
                       >
-                        {isSelected && <span className="text-xs">✓</span>}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
+                        <span className="w-10 h-10 rounded-full bg-slate-900 text-white font-bold text-base flex items-center justify-center shrink-0">
+                          {info.icon}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-bold text-sm text-slate-900 leading-snug">{info.name}</p>
+                          <p className="text-xs text-slate-500 truncate">{isPending ? "Opening GGUSOnePay…" : info.desc}</p>
+                        </div>
+                        <span className="text-emerald-600 font-bold shrink-0">{isPending ? "…" : "→"}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
-            {/* Action Button & Error */}
             <div className="pt-4 border-t border-slate-100 space-y-3">
               {error && <p className="text-xs font-medium text-red-600 bg-red-50 p-2.5 rounded-lg">{error}</p>}
-
-              <button
-                type="button"
-                onClick={handlePaySubmit}
-                disabled={busy}
-                className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg shadow-emerald-500/20 active:scale-[0.99] transition-all flex items-center justify-center gap-2 text-sm disabled:opacity-60"
-              >
-                {busy ? (
-                  <span>Opening GGUSOnePay Cashier…</span>
-                ) : (
-                  <>
-                    <span>Pay ${amount.toFixed(2)} with {currentInfo.name}</span>
-                    <span>→</span>
-                  </>
-                )}
-              </button>
-
-              <p className="text-[11px] text-center text-slate-400 flex items-center justify-center gap-1">
-                <span>🔒 Redirects to Official GGUSOnePay Encrypted Checkout</span>
-              </p>
+              <p className="text-[11px] text-center text-slate-400">🔒 You&apos;ll finish paying ${amount.toFixed(2)} on the GGUSOnePay page</p>
             </div>
           </div>
         </div>
