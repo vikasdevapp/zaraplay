@@ -32,13 +32,23 @@ app.set("trust proxy", 1);
 // Comma-separated so the three planned subdomains (website/admin/agent) can share one API
 // once they exist — e.g. CORS_ORIGIN="https://website.example.com,https://admin.example.com".
 const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:3000").split(",").map((o) => o.trim());
+
+// A page calling the API on its own host (e.g. the Agent Desk on backend.zaraplays.com, where
+// nginx proxies /api) is same-origin, so it's always allowed without listing every host.
+function isSameHost(origin: string, host: string | undefined) {
+  try {
+    return !!host && new URL(origin).host === host;
+  } catch {
+    return false;
+  }
+}
+
 app.use(
-  cors({
-    origin(origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
-      callback(new Error("Not allowed by CORS"));
-    },
-    credentials: true,
+  cors((req, callback) => {
+    const origin = req.headers.origin;
+    const allowed = !origin || allowedOrigins.includes(origin) || isSameHost(origin, req.headers.host);
+    if (!allowed) return callback(new Error("Not allowed by CORS"));
+    callback(null, { origin: true, credentials: true });
   })
 );
 app.use(express.json());

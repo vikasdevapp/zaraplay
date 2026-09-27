@@ -57,8 +57,12 @@ function readStoredSession(): AuthPayload | null {
   }
 }
 
+// The Agent Desk has its own host (backend.zaraplays.com); sessions are per host, so staff who
+// sign in there stay on the desk instead of being sent to the main site signed out.
+const onDeskHost = () => typeof window !== "undefined" && window.location.hostname.startsWith("backend.");
+
 function destinationFor(role: string) {
-  if (["ADMIN", "MASTER_ADMIN"].includes(role)) return "/admin";
+  if (["ADMIN", "MASTER_ADMIN"].includes(role)) return onDeskHost() ? "/agent" : "/admin";
   if (role === "AGENT") return "/agent";
   if (role === "SUPPORT") return "/admin/support";
   return "/dashboard";
