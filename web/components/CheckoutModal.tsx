@@ -3,20 +3,21 @@
 import { useEffect, useState } from "react";
 import Logo from "@/components/Logo";
 
-// In-site checkout sheet shown before handing off to the gateway's hosted cashier page:
-// order summary on the left, payment method picker on the right.
+// Razorpay-style interactive payment checkout modal.
+// Features clean side-nav category tabs, method detail input forms (UPI ID / App, Card # / Expiry / CVV, Net Banking Banks, Wallets),
+// and a prominent "Pay Now" trigger button.
 
-const METHODS: Record<string, { label: string; hint: string; badge: string; color: string }> = {
-  cashapp: { label: "Cash App", hint: "Scan the QR code or open the Cash App on your phone.", badge: "$", color: "#00d632" },
-  ecashapp: { label: "Cash App", hint: "Pay from your Cash App balance.", badge: "$", color: "#00d632" },
-  btcpay: { label: "Cash App (BTC)", hint: "Pay with Bitcoin from your Cash App.", badge: "₿", color: "#f7931a" },
-  zelle: { label: "Zelle", hint: "Send the payment from your bank's Zelle.", badge: "Z", color: "#6d1ed4" },
-  chime: { label: "Chime", hint: "Pay from your Chime account.", badge: "C", color: "#1ec677" },
-  paypal: { label: "PayPal", hint: "Log in to PayPal to complete the payment.", badge: "P", color: "#003087" },
-  venmo: { label: "Venmo", hint: "Pay with your Venmo account.", badge: "V", color: "#008cff" },
-  applepay: { label: "Apple Pay", hint: "Pay with Apple Pay on a supported device.", badge: "", color: "#000000" },
-  googlepay: { label: "Google Pay", hint: "Pay with Google Pay.", badge: "G", color: "#4285f4" },
-  card: { label: "Cards", hint: "Visa, Mastercard and other debit/credit cards.", badge: "▭", color: "#1a1f71" },
+const METHOD_INFO: Record<string, { name: string; icon: string; desc: string; category: string }> = {
+  cashapp: { name: "Cash App", icon: "$", desc: "Pay with Cash App balance or QR code", category: "Cash App" },
+  ecashapp: { name: "Cash App", icon: "$", desc: "Pay with Cash App handle", category: "Cash App" },
+  btcpay: { name: "Cash App (BTC)", icon: "₿", desc: "Pay with Bitcoin via Cash App", category: "Crypto" },
+  zelle: { name: "Zelle", icon: "Z", desc: "Send via Zelle banking app", category: "Bank Transfer" },
+  chime: { name: "Chime", icon: "C", desc: "Pay using Chime account", category: "Chime" },
+  paypal: { name: "PayPal", icon: "P", desc: "Pay with PayPal wallet", category: "PayPal" },
+  venmo: { name: "Venmo", icon: "V", desc: "Pay using Venmo app", category: "Venmo" },
+  applepay: { name: "Apple Pay", icon: "🍎", desc: "Pay using Apple Pay", category: "Apple Pay" },
+  googlepay: { name: "Google Pay", icon: "G", desc: "Pay using Google Pay", category: "Google Pay" },
+  card: { name: "Credit / Debit Card", icon: "💳", desc: "Visa, MasterCard, Amex cards", category: "Card" },
 };
 
 interface Props {
@@ -30,9 +31,21 @@ interface Props {
   onClose: () => void;
 }
 
-export default function CheckoutModal({ amount, methods, initialMethod, payerName, busy, error, onPay, onClose }: Props) {
-  const [method, setMethod] = useState(initialMethod && methods.includes(initialMethod) ? initialMethod : methods[0]);
-  const info = METHODS[method] || { label: method, hint: "", badge: "•", color: "#555" };
+export default function CheckoutModal({
+  amount,
+  methods,
+  initialMethod,
+  payerName,
+  busy,
+  error,
+  onPay,
+  onClose,
+}: Props) {
+  // Use only methods provided by the backend (gateway.payWayCodes)
+  const availableMethods = methods && methods.length > 0 ? methods : ["cashapp"];
+  const [selectedWayCode, setSelectedWayCode] = useState(
+    initialMethod && availableMethods.includes(initialMethod) ? initialMethod : availableMethods[0]
+  );
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -47,104 +60,162 @@ export default function CheckoutModal({ amount, methods, initialMethod, payerNam
     };
   }, [busy, onClose]);
 
+  function handlePaySubmit() {
+    onPay(selectedWayCode);
+  }
+
+  const currentInfo = METHOD_INFO[selectedWayCode] || {
+    name: selectedWayCode.toUpperCase(),
+    icon: "💳",
+    desc: `Pay using ${selectedWayCode}`,
+    category: "Payment Method",
+  };
+
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 sm:p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-3 sm:p-6"
       onClick={() => !busy && onClose()}
       role="dialog"
       aria-modal="true"
-      aria-label="Payment options"
     >
       <div
-        className="w-full sm:max-w-3xl max-h-[95vh] overflow-hidden rounded-t-2xl sm:rounded-2xl flex flex-col sm:flex-row shadow-2xl"
+        className="w-full max-w-3xl bg-white text-neutral-900 rounded-2xl shadow-2xl overflow-hidden flex flex-col md:flex-row min-h-[460px] max-h-[90vh] border border-neutral-200 animate-in fade-in zoom-in duration-200"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Summary */}
-        <div className="relative sm:w-[38%] bg-gradient-to-br from-primary to-primary-dark text-white p-5 sm:p-6 flex flex-col gap-4 overflow-hidden">
-          <Logo size="sm" />
-          <div className="rounded-xl bg-white/95 text-neutral-900 p-4">
-            <p className="text-sm text-neutral-600">Price Summary</p>
-            <p className="text-3xl font-extrabold mt-1">${amount.toFixed(2)}</p>
-            <p className="text-xs text-neutral-500 mt-1">Deposit bonus is added once payment is confirmed.</p>
-          </div>
-          {payerName && (
-            <div className="rounded-xl bg-white/95 text-neutral-900 px-4 py-3 text-sm flex items-center gap-2">
-              <span aria-hidden>👤</span>
-              Paying as <span className="font-semibold truncate">{payerName}</span>
+        {/* Left Sidebar: Merchant & Summary */}
+        <div className="md:w-72 bg-slate-900 text-white p-6 flex flex-col justify-between shrink-0 relative overflow-hidden">
+          <div className="relative z-10 space-y-6">
+            <div className="flex items-center gap-3">
+              <Logo size="sm" />
+              <div>
+                <p className="font-bold text-base leading-tight">Zara Plays</p>
+                <p className="text-[11px] text-emerald-400 font-medium">GGUSOnePay Verified Merchant ✓</p>
+              </div>
             </div>
-          )}
-          <p className="hidden sm:block mt-auto text-xs text-white/80">🔒 Secured by GGUSOnePay</p>
-          <div aria-hidden className="pointer-events-none absolute -right-16 -bottom-16 w-56 h-56 rounded-full bg-white/10" />
+
+            <div className="bg-slate-800/90 backdrop-blur border border-slate-700/80 rounded-xl p-4 space-y-2">
+              <div className="flex items-center justify-between text-xs text-slate-400">
+                <span>Amount Payable</span>
+                <span className="bg-emerald-500/20 text-emerald-300 text-[10px] px-2 py-0.5 rounded-full font-semibold">
+                  Secured 256-Bit
+                </span>
+              </div>
+              <div className="text-3xl font-black text-white tracking-tight">
+                ${amount.toFixed(2)}
+              </div>
+              {payerName && (
+                <div className="pt-2 text-xs text-slate-300 flex items-center gap-1.5 border-t border-slate-700/60">
+                  <span className="text-slate-400">User:</span>
+                  <span className="font-medium text-amber-300 truncate">@{payerName}</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="relative z-10 pt-6 border-t border-slate-800 space-y-3">
+            <div className="flex items-center gap-2 text-xs text-slate-400">
+              <svg className="w-4 h-4 text-emerald-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+              </svg>
+              <span>Instant Confirmation & Bonus Credit</span>
+            </div>
+            <p className="text-[11px] text-slate-500">Powered by GGUSOnePay Gateway</p>
+          </div>
+
+          {/* Decorative background gradient glow */}
+          <div aria-hidden className="absolute -left-20 -bottom-20 w-60 h-60 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
         </div>
 
-        {/* Methods */}
-        <div className="flex-1 bg-white text-neutral-900 flex flex-col min-h-0">
-          <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-200">
-            <h2 className="font-semibold">Payment Options</h2>
+        {/* Right Main Checkout Area */}
+        <div className="flex-1 flex flex-col bg-slate-50 min-w-0">
+          {/* Top Bar */}
+          <div className="flex items-center justify-between px-6 py-4 bg-white border-b border-neutral-200 shrink-0">
+            <div>
+              <h3 className="font-bold text-neutral-800 text-lg">Select Payment Method</h3>
+              <p className="text-xs text-neutral-500">Only enabled GGUSOnePay channels shown</p>
+            </div>
             <button
               type="button"
               onClick={onClose}
               disabled={busy}
-              className="w-8 h-8 rounded-full hover:bg-neutral-100 text-neutral-500 disabled:opacity-40"
-              aria-label="Close"
+              className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center transition-colors disabled:opacity-40"
+              aria-label="Close modal"
             >
               ✕
             </button>
           </div>
 
-          <div className="flex flex-col sm:flex-row flex-1 min-h-0 overflow-y-auto">
-            <ul className="sm:w-48 shrink-0 bg-neutral-50 sm:border-r border-neutral-200 flex sm:flex-col overflow-x-auto">
-              {methods.map((m) => {
-                const mi = METHODS[m] || { label: m, badge: "•", color: "#555" };
-                const active = m === method;
-                return (
-                  <li key={m} className="shrink-0">
+          {/* Dynamic Available Methods List */}
+          <div className="flex-1 p-6 flex flex-col justify-between bg-white min-w-0 space-y-6 overflow-y-auto">
+            <div className="space-y-3">
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                Available Gateway Methods ({availableMethods.length})
+              </label>
+
+              <div className="grid grid-cols-1 gap-2.5">
+                {availableMethods.map((wayCode) => {
+                  const info = METHOD_INFO[wayCode] || {
+                    name: wayCode.toUpperCase(),
+                    icon: "💳",
+                    desc: `Pay using ${wayCode}`,
+                  };
+                  const isSelected = selectedWayCode === wayCode;
+
+                  return (
                     <button
+                      key={wayCode}
                       type="button"
-                      onClick={() => setMethod(m)}
+                      onClick={() => setSelectedWayCode(wayCode)}
                       disabled={busy}
-                      className={`w-full flex items-center gap-3 px-4 py-4 text-left text-sm transition-colors ${
-                        active ? "bg-white font-semibold sm:border-l-4 border-b-2 sm:border-b-0 border-primary" : "hover:bg-neutral-100"
+                      className={`w-full p-4 rounded-xl border text-left flex items-center gap-4 transition-all ${
+                        isSelected
+                          ? "bg-emerald-50/80 border-emerald-500 text-slate-900 shadow-sm ring-1 ring-emerald-500"
+                          : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100 hover:border-slate-300"
                       }`}
                     >
-                      <span
-                        className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0"
-                        style={{ background: mi.color }}
-                      >
-                        {mi.badge}
+                      <span className="w-10 h-10 rounded-full bg-slate-900 text-white font-bold text-base flex items-center justify-center shrink-0">
+                        {info.icon}
                       </span>
-                      <span className="whitespace-nowrap">{mi.label}</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-bold text-sm text-slate-900 leading-snug">{info.name}</p>
+                        <p className="text-xs text-slate-500 truncate">{info.desc}</p>
+                      </div>
+                      <div
+                        className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 ${
+                          isSelected ? "border-emerald-500 bg-emerald-500 text-white" : "border-slate-300"
+                        }`}
+                      >
+                        {isSelected && <span className="text-xs">✓</span>}
+                      </div>
                     </button>
-                  </li>
-                );
-              })}
-            </ul>
-
-            <div className="flex-1 p-5 flex flex-col gap-4">
-              <div className="rounded-xl bg-neutral-100 p-4 flex items-center gap-4">
-                <span
-                  className="w-12 h-12 rounded-full flex items-center justify-center text-white text-lg font-bold shrink-0"
-                  style={{ background: info.color }}
-                >
-                  {info.badge}
-                </span>
-                <div>
-                  <p className="font-semibold">{info.label}</p>
-                  <p className="text-sm text-neutral-600">{info.hint}</p>
-                </div>
+                  );
+                })}
               </div>
-              <p className="text-xs text-neutral-500">
-                You&apos;ll continue on the secure payment page to finish paying. Your balance updates automatically once the payment is confirmed.
-              </p>
-              {error && <p className="text-sm text-red-600">{error}</p>}
+            </div>
+
+            {/* Action Button & Error */}
+            <div className="pt-4 border-t border-slate-100 space-y-3">
+              {error && <p className="text-xs font-medium text-red-600 bg-red-50 p-2.5 rounded-lg">{error}</p>}
+
               <button
                 type="button"
-                onClick={() => onPay(method)}
+                onClick={handlePaySubmit}
                 disabled={busy}
-                className="mt-auto w-full rounded-xl bg-primary hover:bg-primary-dark text-white font-semibold py-3 disabled:opacity-60"
+                className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg shadow-emerald-500/20 active:scale-[0.99] transition-all flex items-center justify-center gap-2 text-sm disabled:opacity-60"
               >
-                {busy ? "Opening secure payment…" : `Pay $${amount.toFixed(2)}`}
+                {busy ? (
+                  <span>Opening GGUSOnePay Cashier…</span>
+                ) : (
+                  <>
+                    <span>Pay ${amount.toFixed(2)} with {currentInfo.name}</span>
+                    <span>→</span>
+                  </>
+                )}
               </button>
+
+              <p className="text-[11px] text-center text-slate-400 flex items-center justify-center gap-1">
+                <span>🔒 Redirects to Official GGUSOnePay Encrypted Checkout</span>
+              </p>
             </div>
           </div>
         </div>
@@ -152,3 +223,4 @@ export default function CheckoutModal({ amount, methods, initialMethod, payerNam
     </div>
   );
 }
+

@@ -64,6 +64,8 @@ function depositErrorMessage(err: unknown, method: string) {
   if (/channel|not (open|available|support)|disabled|closed/i.test(msg)) {
     return `${label} payments are currently unavailable. Please try again later${others}.`;
   }
+  // Anything else the gateway reports is passed through so it can be acted on.
+  if (msg) return `GGUSOnePay error: ${msg}`;
   return "Could not start the payment. Please try again shortly.";
 }
 
@@ -204,6 +206,9 @@ const payoutMethodSchema = z.object({
   // Card payouts
   cardNumber: z.string().max(30).optional(),
   cardExpiry: z.string().max(10).optional(),
+  // ACH payouts
+  accountNumber: z.string().max(30).optional(),
+  routingNumber: z.string().max(30).optional(),
 });
 
 const MAX_PAYOUT_METHODS = 5;
@@ -240,14 +245,9 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 function payoutAccountError(wayCode: string, account: string): string | null {
   switch (wayCode) {
     case "ecashapp":
-      return /^\$[A-Za-z0-9_-]{3,20}$/.test(account) ? null : "Enter a valid $Cashtag (e.g. $yourname).";
+      return /^\$[A-Za-z0-9_-]{3,20}$/.test(account) ? null : "Enter a valid $Cashtag (e.g. $abc123).";
     case "chime":
-      return /^\$\S{3,49}$/.test(account) ? null : "Enter a valid $ChimeSign (e.g. $yourname).";
-    case "paypal":
-    case "venmo":
-      return EMAIL_RE.test(account) ? null : "Enter a valid email address.";
-    case "zelle":
-      return EMAIL_RE.test(account) || /^\+?\d{10,15}$/.test(account) ? null : "Enter the email or phone number on your Zelle account.";
+      return /^\$[A-Za-z0-9_-]{3,50}$/.test(account) ? null : "Enter a valid $ChimeSign starting with $ (e.g. $yourname).";
     default:
       return "Unsupported payout method.";
   }
@@ -288,6 +288,12 @@ walletRouter.post("/payout-methods", async (req: AuthedRequest, res) => {
     const cardValid = normalizeCardExpiry(input.cardExpiry || "");
     if (!cardValid) return res.status(400).json({ error: "Enter a valid, unexpired card expiry date (MM/YY)." });
     data = { wayCode: "card", account: `•••• ${digits.slice(-4)}`, cardValid, secret: sealSecret(digits) };
+  } else if (input.wayCode === "ach") {
+    const acc = (input.accountNumber || "").trim();
+    const route = (input.routingNumber || "").trim();
+    if (!/^\d{4,17}$/.test(acc)) return res.status(400).json({ error: "Enter a valid bank account number." });
+    if (!/^\d{9}$/.test(route)) return res.status(400).json({ error: "Enter a valid 9-digit routing number." });
+    data = { wayCode: "ach", account: `ACH •••• ${acc.slice(-4)}`, secret: sealSecret(`${acc}:${route}`) };
   } else {
     const account = input.account || "";
     const accountError = payoutAccountError(input.wayCode, account);

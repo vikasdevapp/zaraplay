@@ -213,12 +213,9 @@ export function queryPayOrder(mchOrderNo: string) {
 // send { cardNumber, cardValid } instead (see admin cashout approval).
 export const TRANSFER_ACCOUNT_FIELD: Record<string, string> = {
   ecashapp: "cashtag",
-  paypal: "email",
-  venmo: "email",
-  zelle: "zelleSign",
   chime: "chimeSign",
 };
-export const TRANSFER_METHODS = [...Object.keys(TRANSFER_ACCOUNT_FIELD), "card"];
+export const TRANSFER_METHODS = ["ecashapp", "chime", "card"];
 
 export interface TransferOrder {
   transferOrderNo: string;

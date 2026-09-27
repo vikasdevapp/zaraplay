@@ -27,8 +27,13 @@ profileRouter.get("/", async (req: AuthedRequest, res) => {
   res.json({ user });
 });
 
+import { sendOtpEmail } from "../lib/email";
+import { sendOtpSms } from "../lib/sms";
+import { redis } from "../lib/redis";
+
 const updateSchema = z.object({
   fullName: z.string().min(1).max(80).optional(),
+  email: z.string().email().optional(),
   phone: z
     .string()
     .regex(/^\d{10}$/, "Enter a 10 digit phone number.")
@@ -39,9 +44,30 @@ profileRouter.patch("/", async (req: AuthedRequest, res) => {
   const parsed = updateSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid input." });
 
+  const { fullName, email, phone } = parsed.data;
+
+  // Check unique constraints if changing email or phone
+  if (email) {
+    const existingEmail = await prisma.user.findFirst({ where: { email, NOT: { id: req.userId! } } });
+    if (existingEmail) return res.status(409).json({ error: "Email is already taken by another account." });
+  }
+
+  if (phone) {
+    const existingPhone = await prisma.user.findFirst({ where: { phone, NOT: { id: req.userId! } } });
+    if (existingPhone) return res.status(409).json({ error: "Phone number is already associated with another account." });
+  }
+
+  const currentUser = await prisma.user.findUnique({ where: { id: req.userId! } });
+
+  const phoneChanged = phone !== undefined && phone !== currentUser?.phone;
+
   const user = await prisma.user.update({
     where: { id: req.userId! },
-    data: parsed.data,
+    data: {
+      ...(fullName !== undefined ? { fullName } : {}),
+      ...(email !== undefined ? { email } : {}),
+      ...(phone !== undefined ? { phone, ...(phoneChanged ? { phoneVerified: false } : {}) } : {}),
+    },
     select: { id: true, fullName: true, username: true, email: true, phone: true, phoneVerified: true },
   });
   res.json({ user });
@@ -49,11 +75,12 @@ profileRouter.patch("/", async (req: AuthedRequest, res) => {
 
 const passwordSchema = z.object({
   currentPassword: z.string().min(1),
-  newPassword: z.string().min(8, "New password must be at least 8 characters.").max(72),
+  newPassword: z.string().min(6, "New password must be at least 6 characters.").max(72),
 });
 
+// /password is used by the admin panel, /change-password by the player profile page.
 // The current session stays valid (it is the only one), so the user isn't bounced to login.
-profileRouter.post("/password", async (req: AuthedRequest, res) => {
+profileRouter.post(["/password", "/change-password"], async (req: AuthedRequest, res) => {
   const parsed = passwordSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid input." });
   const { currentPassword, newPassword } = parsed.data;
@@ -63,13 +90,17 @@ profileRouter.post("/password", async (req: AuthedRequest, res) => {
   if (!(await bcrypt.compare(currentPassword, user.passwordHash))) {
     return res.status(400).json({ error: "Current password is incorrect." });
   }
+  // Staff accounts guard the admin panel, so they need a longer password than players.
+  if (user.role !== "USER" && newPassword.length < 8) {
+    return res.status(400).json({ error: "New password must be at least 8 characters." });
+  }
   if (currentPassword === newPassword) {
     return res.status(400).json({ error: "New password must be different from the current one." });
   }
 
   await prisma.user.update({ where: { id: req.userId! }, data: { passwordHash: await bcrypt.hash(newPassword, 10) } });
   if (user.role !== "USER") await logAudit(req.userId!, "PASSWORD_CHANGED", { targetType: "User", targetId: req.userId! });
-  res.json({ ok: true });
+  res.json({ ok: true, message: "Password updated successfully!" });
 });
 
 // Simulated verification — a real deployment would send an OTP via Twilio here.
@@ -87,3 +118,4 @@ profileRouter.post("/verify-phone", async (req: AuthedRequest, res) => {
   });
   res.json({ user, freePlayGranted: 5 });
 });
+

@@ -8,6 +8,7 @@ import { redis, pendingSignupKey, signupIpKey } from "../lib/redis";
 import { limitSignupsByIp, recordSuccessfulSignupIp, getClientIp } from "../middleware/ipLimit";
 import { getPlatformSettings } from "../lib/settings";
 import { sendOtpEmail } from "../lib/email";
+import { sendOtpSms } from "../lib/sms";
 import { issueSession, getSession, clearSession, verifyRefreshToken } from "../lib/tokens";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 
@@ -266,3 +267,104 @@ authRouter.post("/logout", requireAuth, async (req: AuthedRequest, res) => {
   await clearSession(req.userId!);
   res.json({ ok: true });
 });
+
+// FORGOT PASSWORD FLOW
+const forgotPasswordKey = (token: string) => `forgot-password:${token}`;
+const FORGOT_PASSWORD_TTL_SECONDS = 10 * 60;
+
+const forgotPasswordSchema = z.object({
+  identifier: z.string().min(1), // email or phone
+});
+
+authRouter.post("/forgot-password", async (req, res) => {
+  const parsed = forgotPasswordSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid input." });
+
+  const { identifier } = parsed.data;
+  const user = await prisma.user.findFirst({
+    where: { OR: [{ email: identifier }, { phone: identifier }, { username: identifier }] },
+  });
+
+  if (!user) {
+    // Return success to avoid user enumeration
+    return res.json({ message: "If an account exists, a reset OTP has been sent." });
+  }
+
+  const resetToken = crypto.randomUUID();
+  const otp = generateOtp();
+
+  const resetData = {
+    userId: user.id,
+    otp,
+    attempts: 0,
+  };
+
+  await redis.set(forgotPasswordKey(resetToken), JSON.stringify(resetData), "EX", FORGOT_PASSWORD_TTL_SECONDS);
+
+  let devOtpPreview: string | undefined;
+
+  // Send via email or phone
+  if (identifier.includes("@") || user.email === identifier) {
+    try {
+      await sendOtpEmail(user.email, otp);
+    } catch (err) {
+      console.error("Failed to send reset email:", err);
+    }
+  } else {
+    // SMS send
+    const phone = user.phone || identifier;
+    const smsRes = await sendOtpSms(phone, otp);
+    if (smsRes.devCode) devOtpPreview = smsRes.devCode;
+  }
+
+  res.json({
+    resetToken,
+    message: "OTP sent successfully.",
+    expiresInSeconds: FORGOT_PASSWORD_TTL_SECONDS,
+    devOtpPreview,
+  });
+});
+
+const resetPasswordSchema = z.object({
+  resetToken: z.string().min(1),
+  otp: z.string().length(6),
+  newPassword: z.string().min(6).max(72),
+});
+
+authRouter.post("/reset-password", async (req, res) => {
+  const parsed = resetPasswordSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid input. Password must be at least 6 characters." });
+
+  const { resetToken, otp, newPassword } = parsed.data;
+  const key = forgotPasswordKey(resetToken);
+  const raw = await redis.get(key);
+
+  if (!raw) return res.status(400).json({ error: "Reset token expired or invalid. Please request again." });
+
+  const data = JSON.parse(raw) as { userId: string; otp: string; attempts: number };
+
+  if (data.attempts >= MAX_OTP_ATTEMPTS) {
+    await redis.del(key);
+    return res.status(429).json({ error: "Too many incorrect attempts. Please request again." });
+  }
+
+  if (data.otp !== otp) {
+    data.attempts += 1;
+    const ttl = await redis.ttl(key);
+    await redis.set(key, JSON.stringify(data), "EX", ttl > 0 ? ttl : FORGOT_PASSWORD_TTL_SECONDS);
+    return res.status(400).json({ error: `Incorrect OTP. ${MAX_OTP_ATTEMPTS - data.attempts} attempt(s) left.` });
+  }
+
+  const passwordHash = await bcrypt.hash(newPassword, 10);
+  await prisma.user.update({
+    where: { id: data.userId },
+    data: { passwordHash },
+  });
+
+  await redis.del(key);
+  // Clear any existing user sessions
+  await clearSession(data.userId);
+
+  res.json({ message: "Password updated successfully! Please log in with your new password." });
+});
+
