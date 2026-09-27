@@ -17,7 +17,8 @@ function slugify(name: string) {
 
 adminGamesRouter.post("/upload-image", uploadGameImage.single("image"), (req: AuthedRequest, res) => {
   if (!req.file) return res.status(400).json({ error: "No image uploaded." });
-  const url = `${req.protocol}://${req.get("host")}/uploads/games/${req.file.filename}`;
+  // Site-relative so the link survives domain / http->https changes.
+  const url = `/uploads/games/${req.file.filename}`;
   res.status(201).json({ url });
 });
 
@@ -36,9 +37,15 @@ const webUrl = z
   .url()
   .refine((u) => /^https?:\/\//i.test(u), "Play link must start with http:// or https://");
 
+// Our own uploads are stored site-relative (/uploads/...); external images need a full http(s) URL.
+const imageUrl = z
+  .string()
+  .trim()
+  .refine((u) => /^\/uploads\/[\w./-]+$/.test(u) || /^https?:\/\/\S+$/i.test(u), "Image must be an uploaded file or an http(s) URL");
+
 const createSchema = z.object({
   name: z.string().min(1).max(60),
-  imageUrl: z.string().url().optional().or(z.literal("")),
+  imageUrl: imageUrl.optional().or(z.literal("")),
   // Admin reference only — never surfaced as a live link on the customer site.
   playUrl: webUrl.optional().or(z.literal("")),
   isActive: z.boolean().optional(),
@@ -69,7 +76,7 @@ adminGamesRouter.post("/", async (req: AuthedRequest, res) => {
 
 const updateSchema = z.object({
   name: z.string().min(1).max(60).optional(),
-  imageUrl: z.string().url().optional().or(z.literal("")),
+  imageUrl: imageUrl.optional().or(z.literal("")),
   playUrl: webUrl.optional().or(z.literal("")),
   isActive: z.boolean().optional(),
   sortOrder: z.number().int().optional(),
