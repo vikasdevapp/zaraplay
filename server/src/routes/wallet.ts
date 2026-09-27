@@ -58,6 +58,7 @@ function depositErrorMessage(err: unknown, method: string) {
   const label = PAY_METHOD_LABELS[method] || "This payment method";
   const others = gateway.payWayCodes.length > 1 ? " or choose another payment method" : "";
   const msg = err instanceof GatewayError ? err.message : "";
+  if (msg) return `GGUSOnePay error: ${msg}`;
   if (/maintenance/i.test(msg)) {
     return `${label} payments are temporarily under maintenance. Please try again later${others}.`;
   }
