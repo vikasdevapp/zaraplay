@@ -17,16 +17,22 @@ import { adminVipTiersRouter } from "./vipTiers";
 import { adminMarketplaceRouter } from "./marketplace";
 import { adminRouletteRouter } from "./roulette";
 import { adminPaymentGatewayRouter } from "./paymentGateway";
+import { adminSupportTeamRouter } from "./supportTeam";
 
 export const adminRouter = Router();
 
+adminRouter.use(requireAuth);
+
+// SUPPORT staff get the support inbox and nothing else; mounted ahead of the admin-only guard.
+adminRouter.use("/support", requireRole("SUPPORT", "ADMIN", "MASTER_ADMIN"), adminSupportRouter);
+
 // ADMIN and MASTER_ADMIN share full operational access to the site.
-adminRouter.use(requireAuth, requireRole("ADMIN", "MASTER_ADMIN"));
+adminRouter.use(requireRole("ADMIN", "MASTER_ADMIN"));
 
 adminRouter.use("/games", adminGamesRouter);
 adminRouter.use("/users", adminUsersRouter);
 adminRouter.use("/cashouts", adminCashoutsRouter);
-adminRouter.use("/support", adminSupportRouter);
+adminRouter.use("/support-team", adminSupportTeamRouter);
 adminRouter.use("/broadcast", adminBroadcastRouter);
 adminRouter.use("/stats", adminStatsRouter);
 adminRouter.use("/transactions", adminTransactionsRouter);

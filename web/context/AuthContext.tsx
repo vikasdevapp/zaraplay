@@ -60,6 +60,7 @@ function readStoredSession(): AuthPayload | null {
 function destinationFor(role: string) {
   if (["ADMIN", "MASTER_ADMIN"].includes(role)) return "/admin";
   if (role === "AGENT") return "/agent";
+  if (role === "SUPPORT") return "/admin/support";
   return "/dashboard";
 }
 

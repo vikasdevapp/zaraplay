@@ -1,8 +1,13 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma";
+import { AuthedRequest, requireRole } from "../../middleware/auth";
 
+// Shared by ADMIN, MASTER_ADMIN and SUPPORT staff (see admin/index.ts); managing the agent
+// personas themselves stays admin-only.
 export const adminSupportRouter = Router();
+
+const adminOnly = requireRole("ADMIN", "MASTER_ADMIN");
 
 adminSupportRouter.get("/agents", async (_req, res) => {
   const agents = await prisma.supportAgent.findMany({ orderBy: { name: "asc" } });
@@ -11,7 +16,7 @@ adminSupportRouter.get("/agents", async (_req, res) => {
 
 const createAgentSchema = z.object({ name: z.string().min(1).max(60) });
 
-adminSupportRouter.post("/agents", async (req, res) => {
+adminSupportRouter.post("/agents", adminOnly, async (req, res) => {
   const parsed = createAgentSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid name." });
   const agent = await prisma.supportAgent.create({ data: { name: parsed.data.name } });
@@ -20,7 +25,7 @@ adminSupportRouter.post("/agents", async (req, res) => {
 
 const toggleAgentSchema = z.object({ isOnline: z.boolean() });
 
-adminSupportRouter.patch("/agents/:id", async (req, res) => {
+adminSupportRouter.patch("/agents/:id", adminOnly, async (req, res) => {
   const parsed = toggleAgentSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid input." });
   const agent = await prisma.supportAgent.update({ where: { id: req.params.id }, data: { isOnline: parsed.data.isOnline } });
@@ -55,18 +60,27 @@ adminSupportRouter.get("/agents/:agentId/threads/:userId/messages", async (req, 
   const messages = await prisma.chatMessage.findMany({
     where: { agentId: req.params.agentId, userId: req.params.userId },
     orderBy: { createdAt: "asc" },
+    include: { sentBy: { select: { fullName: true, username: true } } },
   });
   res.json({ messages });
 });
 
 const replySchema = z.object({ body: z.string().min(1).max(2000) });
 
-adminSupportRouter.post("/agents/:agentId/threads/:userId/messages", async (req, res) => {
+adminSupportRouter.post("/agents/:agentId/threads/:userId/messages", async (req: AuthedRequest, res) => {
   const parsed = replySchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Message cannot be empty." });
 
+  // sentById records which staff account replied, for the Support Team performance view.
   const message = await prisma.chatMessage.create({
-    data: { userId: req.params.userId, agentId: req.params.agentId, sender: "AGENT", body: parsed.data.body },
+    data: {
+      userId: req.params.userId,
+      agentId: req.params.agentId,
+      sender: "AGENT",
+      body: parsed.data.body,
+      sentById: req.userId!,
+    },
+    include: { sentBy: { select: { fullName: true, username: true } } },
   });
   res.status(201).json({ message });
 });

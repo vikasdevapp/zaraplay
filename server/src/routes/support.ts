@@ -15,6 +15,7 @@ supportRouter.get("/agents/:agentId/messages", async (req: AuthedRequest, res) =
   const messages = await prisma.chatMessage.findMany({
     where: { userId: req.userId!, agentId: req.params.agentId },
     orderBy: { createdAt: "asc" },
+    omit: { sentById: true }, // which staff member replied is internal
   });
   res.json({ messages });
 });

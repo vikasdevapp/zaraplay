@@ -23,6 +23,7 @@ interface Message {
   sender: "USER" | "AGENT";
   body: string;
   createdAt: string;
+  sentBy?: { fullName: string; username: string } | null;
 }
 
 export default function AdminSupportPage() {
@@ -125,10 +126,12 @@ export default function AdminSupportPage() {
               </div>
               <div className="flex-1 overflow-y-auto px-4 py-4 space-y-2">
                 {messages.map((m) => (
-                  <div key={m.id} className={`flex ${m.sender === "AGENT" ? "justify-end" : "justify-start"}`}>
+                  <div key={m.id} className={`flex flex-col ${m.sender === "AGENT" ? "items-end" : "items-start"}`}>
                     <div className={`max-w-[75%] rounded-2xl px-3 py-2 text-sm ${m.sender === "AGENT" ? "bg-primary text-white" : "bg-surface2 text-white"}`}>
                       {m.body}
                     </div>
+                    {/* Staff-only: which team member actually sent the reply. Users just see the agent. */}
+                    {m.sender === "AGENT" && m.sentBy && <p className="text-[10px] text-muted mt-0.5">by {m.sentBy.fullName}</p>}
                   </div>
                 ))}
               </div>

@@ -16,6 +16,7 @@ datasource db {
 enum Role {
   USER
   AGENT
+  SUPPORT
   ADMIN
   MASTER_ADMIN
 }
@@ -67,7 +68,8 @@ model User {
   wallet        Wallet?
   games         UserGame[]
   transactions  Transaction[]
-  chatMessages  ChatMessage[]
+  chatMessages  ChatMessage[] @relation("UserChats")
+  supportReplies ChatMessage[] @relation("SupportReplies")
   auditLogs     AuditLog[]
   rouletteSpins RouletteSpin[]
   pushSubscriptions PushSubscription[]
@@ -163,12 +165,17 @@ model SupportAgent {
 model ChatMessage {
   id        String        @id @default(cuid())
   userId    String
-  user      User          @relation(fields: [userId], references: [id])
+  user      User          @relation("UserChats", fields: [userId], references: [id])
   agentId   String
   agent     SupportAgent  @relation(fields: [agentId], references: [id])
   sender    String // "USER" | "AGENT"
+  // Staff account that typed an AGENT reply (null for user messages and pre-tracking replies).
+  sentById  String?
+  sentBy    User?         @relation("SupportReplies", fields: [sentById], references: [id])
   body      String
   createdAt DateTime      @default(now())
+
+  @@index([sentById, createdAt])
 }
 
 model BroadcastMessage {
