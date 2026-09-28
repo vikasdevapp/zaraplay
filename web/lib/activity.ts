@@ -18,6 +18,7 @@ const LABELS: Record<string, (meta: Meta) => string> = {
   GAME_RECHARGE_COMPLETED: (x) => `Website load done ${m(x?.amount)}`,
   GAME_REDEEM_COMPLETED: (x) => `Website redeem done ${m(x?.redeemedAmount ?? x?.amount)}`,
   GAME_PASSWORD_RESET_COMPLETED: () => "Website password reset done",
+  GAME_BALANCE_CHECK_COMPLETED: () => "Website balance check answered",
 };
 
 export function describeActivity(action: string, meta: Meta) {

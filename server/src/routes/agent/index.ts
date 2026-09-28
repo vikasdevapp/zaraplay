@@ -67,7 +67,7 @@ const requestInclude = {
 
 agentRouter.get("/requests", async (req: AuthedRequest, res) => {
   const status = ["PENDING", "COMPLETED", "REJECTED", "CANCELLED"].includes(String(req.query.status)) ? String(req.query.status) : "PENDING";
-  const type = ["CREATE_ACCOUNT", "RECHARGE", "REDEEM", "PASSWORD_RESET"].includes(String(req.query.type)) ? String(req.query.type) : undefined;
+  const type = ["CREATE_ACCOUNT", "RECHARGE", "REDEEM", "PASSWORD_RESET", "BALANCE_CHECK"].includes(String(req.query.type)) ? String(req.query.type) : undefined;
   const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
 
   const where: Prisma.GameRequestWhereInput = {
@@ -118,6 +118,7 @@ const completeSchema = z.object({
   gamePassword: z.string().max(100).optional(),
   redeemedAmount: z.number().finite().optional(),
   remainingBalance: z.number().finite().optional(),
+  balance: z.number().finite().optional(),
   note: z.string().max(300).optional(),
 });
 

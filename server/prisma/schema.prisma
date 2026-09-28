@@ -51,6 +51,8 @@ enum GameRequestType {
   RECHARGE
   REDEEM
   PASSWORD_RESET
+  // Player asks for their recorded balance to be re-read from the game platform.
+  BALANCE_CHECK
 }
 
 enum GameRequestStatus {

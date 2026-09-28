@@ -5,6 +5,7 @@ import { AuthedRequest, requireAuth } from "../middleware/auth";
 import {
   GameError,
   cancelRequest,
+  requestBalanceCheck,
   requestGameAccount,
   requestPasswordReset,
   requestRecharge,
@@ -130,6 +131,16 @@ gamesRouter.post("/mine/:id/reset-password", async (req: AuthedRequest, res) => 
   try {
     const request = await requestPasswordReset(req.userId!, req.params.id);
     res.status(201).json({ request });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+// "Refresh balance": an agent re-reads it from the game platform.
+gamesRouter.post("/mine/:id/balance-check", async (req: AuthedRequest, res) => {
+  try {
+    const { request, alreadyOpen } = await requestBalanceCheck(req.userId!, req.params.id);
+    res.status(alreadyOpen ? 200 : 201).json({ request, alreadyOpen });
   } catch (err) {
     sendError(res, err);
   }

@@ -70,7 +70,7 @@ function depositErrorMessage(err: unknown, method: string, amount: number) {
     return `${label} payments are currently unavailable. Please try again later${others}.`;
   }
   if (/amount/i.test(msg)) {
-    return `${label} doesn't accept a ${amount.toFixed(2)} deposit. Please try a different amount${others}.`;
+    return `${label} doesn't accept a $${amount.toFixed(2)} deposit. Please try a different amount${others}.`;
   }
   // Anything else the gateway reports is passed through so it can be acted on.
   if (msg) return `GGUSOnePay error: ${msg}`;

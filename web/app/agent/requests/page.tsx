@@ -5,7 +5,7 @@ import AgentShell from "@/components/AgentShell";
 import { useApi, useAuth } from "@/context/AuthContext";
 import { ApiError } from "@/lib/api";
 
-type RequestType = "CREATE_ACCOUNT" | "RECHARGE" | "REDEEM" | "PASSWORD_RESET";
+type RequestType = "CREATE_ACCOUNT" | "RECHARGE" | "REDEEM" | "PASSWORD_RESET" | "BALANCE_CHECK";
 type Status = "PENDING" | "COMPLETED" | "REJECTED" | "CANCELLED";
 
 interface GameRequest {
@@ -47,6 +47,11 @@ const TYPE_META: Record<RequestType, { label: string; badge: string; help: strin
     label: "Redeem",
     badge: "bg-yellow-500/20 text-yellow-300",
     help: "Check the player's real balance on the game platform, redeem up to the amount asked, then enter what you redeemed and what's left. The redeemed amount goes to their wallet.",
+  },
+  BALANCE_CHECK: {
+    label: "Balance check",
+    badge: "bg-teal-500/20 text-teal-300",
+    help: "The player wants their current balance. Look it up on the game platform and enter exactly what it shows — nothing is loaded or redeemed.",
   },
   PASSWORD_RESET: {
     label: "Password reset",
@@ -93,6 +98,7 @@ function RequestCard({ r, meId, isAdmin, onDone }: { r: GameRequest; meId: strin
   const [gamePassword, setGamePassword] = useState("");
   const [redeemed, setRedeemed] = useState(Number(r.amount).toFixed(2));
   const [remaining, setRemaining] = useState("");
+  const [checked, setChecked] = useState("");
   const [note, setNote] = useState("");
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState("");
@@ -138,6 +144,14 @@ function RequestCard({ r, meId, isAdmin, onDone }: { r: GameRequest; meId: strin
       }
       case "PASSWORD_RESET":
         return call(base, { gamePassword, note: n }, `Password reset for @${r.user.username}.`);
+      case "BALANCE_CHECK": {
+        const balance = Number(checked);
+        if (!checked.trim() || !Number.isFinite(balance) || balance < 0) {
+          setError("Enter the balance the game shows now.");
+          return;
+        }
+        return call(base, { balance, note: n }, `Balance updated for @${r.user.username}.`);
+      }
     }
   }
 
@@ -236,6 +250,12 @@ function RequestCard({ r, meId, isAdmin, onDone }: { r: GameRequest; meId: strin
                   <input className="input" placeholder="Game password" value={gamePassword} onChange={(e) => setGamePassword(e.target.value)} required maxLength={100} />
                 </div>
               )}
+              {r.type === "BALANCE_CHECK" && (
+                <label className="text-xs text-muted block">
+                  Balance the game shows now (recorded: {money(r.userGame.balance)})
+                  <input className="input mt-1" type="number" step="0.01" min="0" placeholder="e.g. 42.50" value={checked} onChange={(e) => setChecked(e.target.value)} required />
+                </label>
+              )}
               {r.type === "PASSWORD_RESET" && (
                 <input className="input" placeholder="New game password" value={gamePassword} onChange={(e) => setGamePassword(e.target.value)} required maxLength={100} />
               )}
@@ -260,7 +280,9 @@ function RequestCard({ r, meId, isAdmin, onDone }: { r: GameRequest; meId: strin
                       ? `✅ ${money(r.amount)} loaded`
                       : r.type === "REDEEM"
                         ? "✅ Redeem done"
-                        : "✅ Password set"}
+                        : r.type === "BALANCE_CHECK"
+                          ? "✅ Balance updated"
+                          : "✅ Password set"}
                 </button>
                 <button type="button" className="btn-ghost text-sm" onClick={() => setRejecting(true)} disabled={busy}>
                   ✖ Reject

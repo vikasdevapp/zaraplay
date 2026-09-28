@@ -28,7 +28,7 @@ interface Member {
 
 interface HandledRequest {
   id: string;
-  type: "CREATE_ACCOUNT" | "RECHARGE" | "REDEEM" | "PASSWORD_RESET";
+  type: "CREATE_ACCOUNT" | "RECHARGE" | "REDEEM" | "PASSWORD_RESET" | "BALANCE_CHECK";
   status: "COMPLETED" | "REJECTED" | "CANCELLED" | "PENDING";
   amount: string;
   completedAmount: string | null;
@@ -39,7 +39,7 @@ interface HandledRequest {
   userGame: { game: { name: string } };
 }
 
-const TYPE_LABELS = { CREATE_ACCOUNT: "Create account", RECHARGE: "Load", REDEEM: "Redeem", PASSWORD_RESET: "Password reset" } as const;
+const TYPE_LABELS = { CREATE_ACCOUNT: "Create account", RECHARGE: "Load", REDEEM: "Redeem", PASSWORD_RESET: "Password reset", BALANCE_CHECK: "Balance check" } as const;
 
 function formatMins(mins: number | null) {
   if (mins === null) return "—";

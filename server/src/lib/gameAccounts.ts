@@ -29,6 +29,8 @@ export class GameError extends Error {
 export const MIN_GAME_AMOUNT = 1;
 export const MAX_GAME_AMOUNT = 100000;
 const MAX_OPEN_RECHARGES_PER_GAME = 5;
+// A balance that was re-read this recently doesn't need another check yet.
+const BALANCE_CHECK_COOLDOWN_MS = 5 * 60 * 1000;
 
 type Tx = Prisma.TransactionClient;
 type Actor = { id: string; role: string };
@@ -192,6 +194,37 @@ export async function requestPasswordReset(userId: string, userGameId: string) {
   return prisma.gameRequest.create({ data: { userId, userGameId, type: "PASSWORD_RESET" } });
 }
 
+/**
+ * "Refresh balance": asks an agent to re-read the balance on the game platform. Idempotent —
+ * an open check is returned rather than duplicated — and throttled after a recent update.
+ */
+export async function requestBalanceCheck(userId: string, userGameId: string) {
+  const ug = await ownGame(userId, userGameId);
+  if (ug.status !== "ACTIVE") throw new GameError(400, "This game account isn't ready yet.");
+  const open = await prisma.gameRequest.findFirst({ where: { userGameId, type: "BALANCE_CHECK", status: "PENDING" } });
+  if (open) return { request: open, alreadyOpen: true };
+  if (ug.balanceSyncedAt && Date.now() - ug.balanceSyncedAt.getTime() < BALANCE_CHECK_COOLDOWN_MS) {
+    const mins = Math.max(1, Math.round((Date.now() - ug.balanceSyncedAt.getTime()) / 60000));
+    throw new GameError(429, `Your balance was updated ${mins} min ago. You can ask again in a few minutes.`);
+  }
+  const request = await prisma.gameRequest.create({ data: { userId, userGameId, type: "BALANCE_CHECK" } });
+  return { request, alreadyOpen: false };
+}
+
+/**
+ * Any time an agent records a balance they actually saw on the game platform, open balance
+ * checks for that account are answered by it — nobody has to do the same lookup twice.
+ */
+async function answerOpenBalanceChecks(tx: Tx, userGameId: string, actorId: string, balance: number) {
+  const open = await tx.gameRequest.findMany({ where: { userGameId, type: "BALANCE_CHECK", status: "PENDING" }, select: { id: true, userId: true } });
+  if (!open.length) return [];
+  await tx.gameRequest.updateMany({
+    where: { id: { in: open.map((r) => r.id) }, status: "PENDING" },
+    data: { status: "COMPLETED", completedAmount: balance, handledById: actorId, completedAt: new Date(), agentNote: "Answered by a balance update" },
+  });
+  return open;
+}
+
 /** A player can withdraw a request until an agent starts working on it. */
 export async function cancelRequest(userId: string, requestId: string) {
   const request = await prisma.gameRequest.findFirst({ where: { id: requestId, userId } });
@@ -290,6 +323,8 @@ export interface CompleteInput {
   gamePassword?: string;
   redeemedAmount?: number;
   remainingBalance?: number;
+  // BALANCE_CHECK: the balance the game platform shows now.
+  balance?: number;
   note?: string;
 }
 
@@ -351,7 +386,8 @@ function completeInTx(requestId: string, actor: Actor, input: CompleteInput) {
         const request = await finishRequest(tx, requestId, actor, { status: "COMPLETED", completedAmount: current.amount, agentNote: note });
         const loaded = await tx.userGame.update({
           where: { id: ug.id },
-          data: { balance: { increment: request.amount }, balanceSyncedAt: new Date(), balanceSyncedById: actor.id },
+          // Adds to the recorded balance; not a fresh read of it, so balanceSyncedAt stays as is.
+          data: { balance: { increment: request.amount } },
         });
         if (request.transactionId) await tx.transaction.update({ where: { id: request.transactionId }, data: { status: "COMPLETED" } });
         await recordGameTx(tx, {
@@ -365,7 +401,7 @@ function completeInTx(requestId: string, actor: Actor, input: CompleteInput) {
           staffId: actor.id,
           gameRequestId: request.id,
         });
-        return { request, notify: `${Number(request.amount).toFixed(2)} has been loaded into ${ug.game.name}.` };
+        return { request, notify: `$${Number(request.amount).toFixed(2)} has been loaded into ${ug.game.name}.` };
       }
 
       case "REDEEM": {
@@ -407,7 +443,18 @@ function completeInTx(requestId: string, actor: Actor, input: CompleteInput) {
           staffId: actor.id,
           gameRequestId: request.id,
         });
-        return { request, notify: `${redeemedAmount.toFixed(2)} from ${ug.game.name} has been added to your wallet.` };
+        await answerOpenBalanceChecks(tx, ug.id, actor.id, remainingBalance);
+        return { request, notify: `$${redeemedAmount.toFixed(2)} from ${ug.game.name} has been added to your wallet.` };
+      }
+
+      case "BALANCE_CHECK": {
+        if (ug.status !== "ACTIVE") throw new GameError(400, "This game account isn't active.");
+        const value = Math.round((input.balance ?? NaN) * 100) / 100;
+        if (!Number.isFinite(value) || value < 0 || value > 10_000_000) throw new GameError(400, "Enter the balance the game shows now.");
+        const request = await finishRequest(tx, requestId, actor, { status: "COMPLETED", completedAmount: value, agentNote: note });
+        await tx.userGame.update({ where: { id: ug.id }, data: { balance: value, balanceSyncedAt: new Date(), balanceSyncedById: actor.id } });
+        await answerOpenBalanceChecks(tx, ug.id, actor.id, value);
+        return { request, notify: `Your ${ug.game.name} balance is $${value.toFixed(2)}.` };
       }
 
       case "PASSWORD_RESET": {
@@ -440,11 +487,18 @@ export async function rejectRequest(requestId: string, actor: Actor, reason: str
 export async function syncBalance(userGameId: string, actor: Actor, balance: number) {
   const value = Math.round(balance * 100) / 100;
   if (!Number.isFinite(value) || value < 0 || value > 10_000_000) throw new GameError(400, "Enter a valid balance.");
-  const res = await prisma.userGame.updateMany({
-    where: { id: userGameId, status: "ACTIVE" },
-    data: { balance: value, balanceSyncedAt: new Date(), balanceSyncedById: actor.id },
+  const answered = await prisma.$transaction(async (tx) => {
+    const res = await tx.userGame.updateMany({
+      where: { id: userGameId, status: "ACTIVE" },
+      data: { balance: value, balanceSyncedAt: new Date(), balanceSyncedById: actor.id },
+    });
+    if (!res.count) throw new GameError(404, "Active game account not found.");
+    return answerOpenBalanceChecks(tx, userGameId, actor.id, value);
   });
-  if (!res.count) throw new GameError(404, "Active game account not found.");
+  if (answered.length) {
+    const ug = await prisma.userGame.findUnique({ where: { id: userGameId }, select: { game: { select: { name: true } } } });
+    sendPushToUser(answered[0].userId, { title: "Zara Plays", body: `Your ${ug?.game.name ?? "game"} balance is $${value.toFixed(2)}.` }).catch(() => {});
+  }
 }
 
 /** Fixes the stored login for an existing account (e.g. a typo when it was created). */

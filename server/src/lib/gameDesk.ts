@@ -136,7 +136,7 @@ export async function createManualTransaction(input: ManualTxInput, actor: Actor
       // Conditional: never takes the recorded balance below zero, even with two agents at once.
       const res = await tx.userGame.updateMany({
         where: { id: ug.id, balance: { gte: amount } },
-        data: { balance: { decrement: amount }, balanceSyncedAt: new Date(), balanceSyncedById: actor.id },
+        data: { balance: { decrement: amount } },
       });
       if (!res.count) {
         const current = await tx.userGame.findUniqueOrThrow({ where: { id: ug.id } });
@@ -152,7 +152,9 @@ export async function createManualTransaction(input: ManualTxInput, actor: Actor
     const total = round2(amount + bonus);
     const updated = await tx.userGame.update({
       where: { id: ug.id },
-      data: { balance: { increment: total }, balanceSyncedAt: new Date(), balanceSyncedById: actor.id },
+      // Loads and redeems move the recorded balance but aren't a fresh read of the game, so
+      // balanceSyncedAt (what "updated X ago" and the refresh cooldown use) is left alone.
+      data: { balance: { increment: total } },
     });
     const finalBalance = Number(updated.balance);
     const rows = [];

@@ -17,7 +17,7 @@ interface Game {
   playUrl: string | null;
 }
 
-type RequestType = "CREATE_ACCOUNT" | "RECHARGE" | "REDEEM" | "PASSWORD_RESET";
+type RequestType = "CREATE_ACCOUNT" | "RECHARGE" | "REDEEM" | "PASSWORD_RESET" | "BALANCE_CHECK";
 
 interface PendingRequest {
   id: string;
@@ -62,6 +62,7 @@ const REQUEST_LABELS: Record<RequestType, string> = {
   RECHARGE: "Load",
   REDEEM: "Redeem",
   PASSWORD_RESET: "Password reset",
+  BALANCE_CHECK: "Balance check",
 };
 
 const money = (v: string | number) => `$${Number(v).toFixed(2)}`;
@@ -294,6 +295,25 @@ export default function GamesPage() {
     setBusy(false);
   }
 
+  // Balances change while the player plays on the game's own app; older than this, nudge a refresh.
+  const STALE_AFTER_MS = 60 * 60 * 1000;
+
+  async function refreshBalance(ug: UserGame) {
+    setNotice(null);
+    try {
+      const r = await api<{ alreadyOpen: boolean }>(`/api/games/mine/${ug.id}/balance-check`, { method: "POST" });
+      setNotice({
+        type: "success",
+        text: r.alreadyOpen
+          ? `We're already checking your ${ug.game.name} balance. It will update here shortly.`
+          : `Balance check requested. An agent will read your ${ug.game.name} balance and it will update here.`,
+      });
+      await loadAll();
+    } catch (err) {
+      setNotice({ type: "error", text: err instanceof ApiError ? err.message : "Could not request a balance check." });
+    }
+  }
+
   async function simpleRequest(path: string, successText: string) {
     setNotice(null);
     try {
@@ -349,6 +369,9 @@ export default function GamesPage() {
           {mine.map((ug) => {
             const playUrl = safePlayUrl(ug.game.playUrl);
             const active = ug.status === "ACTIVE";
+            const checking = ug.pendingRequests.some((r) => r.type === "BALANCE_CHECK");
+            const stale =
+              active && !checking && (!ug.balanceSyncedAt || Date.now() - new Date(ug.balanceSyncedAt).getTime() > STALE_AFTER_MS);
             return (
               <div key={ug.id} className="card">
                 <div className="flex items-center gap-3 mb-3">
@@ -361,9 +384,25 @@ export default function GamesPage() {
                       </div>
                       <p className="text-xs text-muted">{active ? `Balance updated ${timeAgo(ug.balanceSyncedAt)}` : "Our team is creating your account"}</p>
                     </div>
-                    {active && <p className="text-primary font-semibold shrink-0">{money(ug.balance)}</p>}
+                    {active && (
+                      <div className="text-right shrink-0">
+                        <p className="text-primary font-semibold">{money(ug.balance)}</p>
+                        {checking ? (
+                          <p className="text-[11px] text-muted">checking…</p>
+                        ) : (
+                          <button className="text-[11px] text-primary-light hover:underline" onClick={() => refreshBalance(ug)}>
+                            🔄 Refresh balance
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
+                {stale && (
+                  <p className="text-xs text-yellow-400/90 bg-yellow-500/10 rounded-lg px-3 py-2 mb-3">
+                    Your balance changes while you play in the game app. The amount above may be old — tap Refresh balance to get the latest.
+                  </p>
+                )}
 
                 {active && ug.gameUsername && (
                   <div className="text-sm space-y-2">
