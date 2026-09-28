@@ -51,6 +51,7 @@ const NAV: NavItem[] = [
   { href: "/agent/staff-activity", label: "Staff Activity", icon: "📋", adminOnly: true },
   { href: "/agent/activity", label: "My Activity", icon: "🕓", agentOnly: true },
   { href: "/agent/change-password", label: "Change Password", icon: "🔒" },
+  { href: "/agent/two-factor", label: "Two-Factor (2FA)", icon: "🛡️" },
 ];
 
 const AGENT_DASHBOARD_ROLES = ["AGENT", "ADMIN", "MASTER_ADMIN"];
@@ -66,7 +67,7 @@ export default function AgentShell({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (loading) return;
-    if (!user) router.replace("/login");
+    if (!user) router.replace("/agent/login");
     else if (!AGENT_DASHBOARD_ROLES.includes(user.role)) router.replace("/dashboard");
   }, [loading, user, router]);
 

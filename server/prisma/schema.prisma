@@ -98,6 +98,9 @@ model User {
   phoneVerified Boolean  @default(false)
   // Set from the unsubscribe link in broadcast emails; OTP and account emails still go out.
   emailOptOut   Boolean  @default(false)
+  // Staff two-factor (TOTP, RFC 6238). Secret is base32; only set once the user confirms a code.
+  totpSecret    String?
+  totpEnabled   Boolean  @default(false)
   role          Role     @default(USER)
   avatarUrl     String?
 

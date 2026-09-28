@@ -63,7 +63,11 @@ export function mountStaffLoginRoutes(router: Router, role: "SUPPORT" | "AGENT")
     const member = await prisma.user.findFirst({ where: { id: req.params.id, role } });
     if (!member) return res.status(404).json({ error: `${label} account not found.` });
 
-    await prisma.user.update({ where: { id: member.id }, data: { passwordHash: await bcrypt.hash(parsed.data.password, 10) } });
+    // Also clears two-factor: a reset is how staff who lost their phone get back in.
+    await prisma.user.update({
+      where: { id: member.id },
+      data: { passwordHash: await bcrypt.hash(parsed.data.password, 10), totpEnabled: false, totpSecret: null },
+    });
     await clearSession(member.id); // signs them out everywhere; they log in with the new password
     await logAudit(req.userId!, `${role}_PASSWORD_RESET`, { targetType: "User", targetId: member.id });
     res.json({ ok: true });

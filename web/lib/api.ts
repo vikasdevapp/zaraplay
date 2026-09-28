@@ -5,9 +5,12 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  // The full error body, for flags like { needs2fa: true }.
+  data?: Record<string, unknown>;
+  constructor(status: number, message: string, data?: Record<string, unknown>) {
     super(message);
     this.status = status;
+    this.data = data;
   }
 }
 
@@ -25,7 +28,7 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}, token
   const body = isJson ? await res.json() : undefined;
 
   if (!res.ok) {
-    throw new ApiError(res.status, body?.error || "Something went wrong. Please try again.");
+    throw new ApiError(res.status, body?.error || "Something went wrong. Please try again.", body);
   }
   return body as T;
 }

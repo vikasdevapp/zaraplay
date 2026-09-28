@@ -11,6 +11,7 @@ import { emailDomainAcceptsMail, sendOtpEmail } from "../lib/email";
 import { sendOtpSms } from "../lib/sms";
 import { issueSession, getSession, clearSession, verifyRefreshToken } from "../lib/tokens";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
+import { checkTwoFactor } from "../lib/twoFactor";
 
 export const authRouter = Router();
 
@@ -212,13 +213,20 @@ authRouter.post("/signup/resend", async (req, res) => {
 const loginSchema = z.object({
   emailOrUsername: z.string().min(1),
   password: z.string().min(1),
+  // Agent Desk sign-in picks a role; the account must have exactly that role.
+  loginAs: z.enum(["STAFF", "ADMIN", "MASTER_ADMIN"]).optional(),
+  // Staff with two-factor on: the current 6-digit code.
+  totp: z.string().max(10).optional(),
 });
+
+const LOGIN_AS_ROLE = { STAFF: "AGENT", ADMIN: "ADMIN", MASTER_ADMIN: "MASTER_ADMIN" } as const;
+const LOGIN_AS_LABEL = { STAFF: "Staff", ADMIN: "Admin (Group)", MASTER_ADMIN: "Master Admin" } as const;
 
 authRouter.post("/login", async (req, res) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid input." });
 
-  const { emailOrUsername, password } = parsed.data;
+  const { emailOrUsername, password, loginAs, totp } = parsed.data;
   const user = await prisma.user.findFirst({
     where: { OR: [{ email: emailOrUsername }, { username: emailOrUsername }] },
   });
@@ -226,6 +234,17 @@ authRouter.post("/login", async (req, res) => {
 
   const ok = await bcrypt.compare(password, user.passwordHash);
   if (!ok) return res.status(401).json({ error: "Invalid credentials." });
+
+  // Agent Desk sign-in is role locked: the chosen role must be the account's role. Checked
+  // after the password, so it reveals nothing about accounts the caller can't open.
+  if (loginAs && LOGIN_AS_ROLE[loginAs] !== user.role) {
+    return res.status(403).json({ error: `This account can't sign in as ${LOGIN_AS_LABEL[loginAs]}. Choose its correct role.` });
+  }
+
+  if (user.totpEnabled && user.totpSecret) {
+    const check = await checkTwoFactor(user.id, user.totpSecret, totp);
+    if (!check.ok) return res.status(check.status).json({ error: check.error, needs2fa: true });
+  }
 
   const { accessToken, refreshToken } = await issueSession(user.id, user.role);
   res.json({

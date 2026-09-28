@@ -32,7 +32,10 @@ const MASTER_NAV_ITEMS = [
 ];
 
 // Available to every panel role, SUPPORT included.
-const ACCOUNT_NAV_ITEMS = [{ href: "/admin/change-password", label: "Change Password", icon: "🔑" }];
+const ACCOUNT_NAV_ITEMS = [
+  { href: "/admin/change-password", label: "Change Password", icon: "🔑" },
+  { href: "/admin/two-factor", label: "Two-Factor (2FA)", icon: "🛡️" },
+];
 
 // SUPPORT staff only ever see the support inbox (plus their own password); the API enforces the same rule.
 const SUPPORT_HOME = "/admin/support";

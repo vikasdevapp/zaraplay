@@ -12,6 +12,13 @@ export interface AuthUser {
   role: string;
 }
 
+export interface LoginExtra {
+  // Agent Desk role lock: the account must have this role.
+  loginAs?: "STAFF" | "ADMIN" | "MASTER_ADMIN";
+  // Current authenticator code, for accounts with two-factor on.
+  totp?: string;
+}
+
 export interface SignupStartResult {
   signupToken: string;
   email: string;
@@ -29,7 +36,7 @@ interface AuthContextValue {
   user: AuthUser | null;
   accessToken: string | null;
   loading: boolean;
-  login: (emailOrUsername: string, password: string) => Promise<void>;
+  login: (emailOrUsername: string, password: string, extra?: LoginExtra) => Promise<void>;
   /** Step 1 of signup: validates input and emails a one-time code. No account exists yet. */
   startSignup: (data: { fullName: string; username: string; email: string; password: string; referralCode?: string }) => Promise<SignupStartResult>;
   /** Step 2: confirms the code, creates the account, and logs in. */
@@ -59,7 +66,7 @@ function readStoredSession(): AuthPayload | null {
 
 // The Agent Desk has its own host (backend.zaraplays.com); sessions are per host, so staff who
 // sign in there stay on the desk instead of being sent to the main site signed out.
-const onDeskHost = () => typeof window !== "undefined" && window.location.hostname.startsWith("backend.");
+export const onDeskHost = () => typeof window !== "undefined" && window.location.hostname.startsWith("backend.");
 
 function destinationFor(role: string) {
   if (["ADMIN", "MASTER_ADMIN"].includes(role)) return onDeskHost() ? "/agent" : "/admin";
@@ -138,10 +145,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const getAccessToken = useCallback(() => tokensRef.current.accessToken, []);
 
   const login = useCallback(
-    async (emailOrUsername: string, password: string) => {
+    async (emailOrUsername: string, password: string, extra?: LoginExtra) => {
       const data = await apiFetch<AuthPayload>("/api/auth/login", {
         method: "POST",
-        body: JSON.stringify({ emailOrUsername, password }),
+        body: JSON.stringify({ emailOrUsername, password, ...extra }),
       });
       persist(data);
       router.push(destinationFor(data.user.role));
@@ -186,7 +193,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // best-effort; clear local session regardless
     } finally {
       clearAuth();
-      router.push("/login");
+      router.push(onDeskHost() ? "/agent/login" : "/login");
     }
   }, [clearAuth, router]);
 

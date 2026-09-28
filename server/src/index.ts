@@ -21,6 +21,7 @@ import { phoneRouter } from "./routes/phone";
 import { pushRouter } from "./routes/push";
 import { leaderboardRouter } from "./routes/leaderboard";
 import { emailRouter } from "./routes/email";
+import { twoFactorRouter } from "./routes/twoFactor";
 import { paymentsRouter } from "./routes/payments";
 import { startPaymentReconciler } from "./jobs/paymentReconciler";
 import { startCashoutTimeoutSweeper } from "./jobs/cashoutTimeoutSweeper";
@@ -70,6 +71,7 @@ app.use(
 app.get("/health", (_req, res) => res.json({ ok: true }));
 app.use("/uploads", express.static(path.join(__dirname, "..", "uploads")));
 
+app.use("/api/auth/2fa", twoFactorRouter);
 app.use("/api/auth", authRouter);
 app.use("/api/wallet", walletRouter);
 app.use("/api/games", gamesRouter);

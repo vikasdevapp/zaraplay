@@ -12,15 +12,24 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // Staff with two-factor on: the password was accepted and we now need their app code.
+  const [needsCode, setNeedsCode] = useState(false);
+  const [code, setCode] = useState("");
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
     setSubmitting(true);
     try {
-      await login(emailOrUsername, password);
+      await login(emailOrUsername, password, needsCode ? { totp: code.trim() } : undefined);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Login failed.");
+      if (err instanceof ApiError && err.data?.needs2fa) {
+        if (needsCode) setError(err.message);
+        setNeedsCode(true);
+        setCode("");
+      } else {
+        setError(err instanceof ApiError ? err.message : "Login failed.");
+      }
     } finally {
       setSubmitting(false);
     }
@@ -51,6 +60,22 @@ export default function LoginPage() {
             onChange={(e) => setPassword(e.target.value)}
             required
           />
+          {needsCode && (
+            <div>
+              <p className="text-xs text-muted mb-1">Enter the 6-digit code from your authenticator app.</p>
+              <input
+                className="input text-center text-xl tracking-[0.4em] font-mono"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                placeholder="123456"
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+                autoFocus
+                required
+              />
+            </div>
+          )}
           <div className="text-right">
             <Link href="/forgot-password" className="text-xs text-primary hover:underline">
               Forgot password?
