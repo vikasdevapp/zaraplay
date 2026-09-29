@@ -15,7 +15,7 @@ interface Deposit {
   createdAt: string;
   gatewayProvider: string | null;
   gatewayOrderNo: string | null;
-  meta: { bonusKind?: string; bonusPercent?: number; wayCode?: string; amountMismatch?: boolean; gatewayAlert?: string } | null;
+  meta: { bonusKind?: string; bonusPercent?: number; wayCode?: string; amountMismatch?: boolean; paidCents?: number; requestedAmount?: number; gatewayAlert?: string } | null;
   user: { id: string; fullName: string; username: string; email: string };
 }
 
@@ -116,6 +116,14 @@ export default function AdminDepositsPage() {
               {d.meta?.gatewayAlert && (
                 <p className="text-xs font-semibold text-red-400">⚠ Gateway reports {d.meta.gatewayAlert.toLowerCase()}</p>
               )}
+              {d.meta?.amountMismatch && d.meta.paidCents !== undefined && (
+                <p className="text-xs font-semibold text-yellow-300">
+                  Paid ${(d.meta.paidCents / 100).toFixed(2)} instead of ${Number(d.amount).toFixed(2)} — approving credits the paid amount.
+                </p>
+              )}
+              {d.meta?.requestedAmount !== undefined && (
+                <p className="text-xs text-muted">Settled at the paid amount (requested ${Number(d.meta.requestedAmount).toFixed(2)})</p>
+              )}
               {d.adminNote && <p className="text-xs text-muted">Note: {d.adminNote}</p>}
             </div>
             <div className="flex items-center gap-4">
@@ -142,7 +150,7 @@ export default function AdminDepositsPage() {
                   {/* Gateway deposits credit themselves once paid; manual approval is only for settling a mismatched amount. */}
                   {(!d.gatewayProvider || d.meta?.amountMismatch) && (
                     <button onClick={() => approve(d.id)} disabled={busyId === d.id} className="btn-primary text-sm py-2 px-3">
-                      {d.gatewayProvider ? "Approve anyway" : "Approve"}
+                      {d.gatewayProvider && d.meta?.paidCents !== undefined ? `Approve $${(d.meta.paidCents / 100).toFixed(2)}` : "Approve"}
                     </button>
                   )}
                   <button onClick={() => reject(d.id)} disabled={busyId === d.id} className="btn-ghost text-sm py-2 px-3 text-red-400">

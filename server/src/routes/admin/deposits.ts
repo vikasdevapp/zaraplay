@@ -32,8 +32,27 @@ adminDepositsRouter.post("/:id/approve", async (req: AuthedRequest, res) => {
 
   // Gateway deposits credit themselves when the gateway confirms payment; approving one by hand
   // is only for settling an amount mismatch the gateway already reported as paid.
-  if (transaction.gatewayProvider && !(transaction.meta as { amountMismatch?: boolean } | null)?.amountMismatch) {
+  const meta = (transaction.meta as { amountMismatch?: boolean; paidCents?: number; bonusPercent?: number } | null) || {};
+  if (transaction.gatewayProvider && !meta.amountMismatch) {
     return res.status(409).json({ error: "This deposit is paid through the gateway. Use Check status instead." });
+  }
+
+  // A mismatch is settled at what the gateway says was actually paid (e.g. an ecashapp user
+  // sending $5 on a $50 order gets $5, not $50), with the bonus worked out on that amount.
+  if (meta.amountMismatch) {
+    const paid = Math.round(Number(meta.paidCents)) / 100;
+    if (!Number.isFinite(paid) || paid <= 0) {
+      return res.status(409).json({ error: "The gateway didn't report a paid amount. Check status first." });
+    }
+    const bonus = Math.round(paid * (Number(meta.bonusPercent) || 0)) / 100;
+    await prisma.transaction.updateMany({
+      where: { id: transaction.id, status: "PENDING" },
+      data: {
+        amount: paid,
+        payoutAmount: bonus,
+        meta: { ...(transaction.meta as object), requestedAmount: Number(transaction.amount), settledAtPaidAmount: true },
+      },
+    });
   }
 
   const updated = await completeDeposit(transaction.id, { approvedManually: true });
@@ -42,7 +61,7 @@ adminDepositsRouter.post("/:id/approve", async (req: AuthedRequest, res) => {
   await logAudit(req.userId!, "DEPOSIT_APPROVED", {
     targetType: "Transaction",
     targetId: transaction.id,
-    meta: { userId: transaction.userId, amount: Number(transaction.amount) },
+    meta: { userId: transaction.userId, amount: Number(updated.amount), ...(meta.amountMismatch ? { requestedAmount: Number(transaction.amount) } : {}) },
   });
   res.json({ transaction: updated });
 });
