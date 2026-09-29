@@ -19,16 +19,12 @@ export async function reconcileOnce() {
 
   const olderThan = new Date(Date.now() - MIN_AGE_MS);
   const base = { gatewayProvider: PROVIDER, status: "PENDING" as const, createdAt: { lt: olderThan } };
-  // Separate batches so slow payouts can't crowd out deposits; mismatched deposits are
-  // waiting on an admin and would otherwise clog the batch forever.
-  // (Filtered in code: a JSON-path NOT in SQL also drops rows that lack the key entirely.)
-  const [depositCandidates, cashouts] = await Promise.all([
-    prisma.transaction.findMany({ where: { ...base, type: "DEPOSIT" }, orderBy: { createdAt: "asc" }, take: BATCH * 4 }),
+  // Separate batches so slow payouts can't crowd out deposits. Paid deposits (whatever the
+  // amount) are credited by syncDeposit, so nothing waits on an admin here.
+  const [deposits, cashouts] = await Promise.all([
+    prisma.transaction.findMany({ where: { ...base, type: "DEPOSIT" }, orderBy: { createdAt: "asc" }, take: BATCH }),
     prisma.transaction.findMany({ where: { ...base, type: "CASHOUT" }, orderBy: { createdAt: "asc" }, take: BATCH }),
   ]);
-  const deposits = depositCandidates
-    .filter((t) => !(t.meta as { amountMismatch?: boolean } | null)?.amountMismatch)
-    .slice(0, BATCH);
 
   for (const transaction of [...deposits, ...cashouts]) {
     try {

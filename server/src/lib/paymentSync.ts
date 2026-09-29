@@ -47,8 +47,7 @@ export async function syncDeposit(transaction: TxRow, opts: { closeIfExpired?: b
     return (await prisma.transaction.findUnique({ where: { id: transaction.id } }))!;
   }
 
-  const meta = (transaction.meta as { expireTimestamp?: number; amountMismatch?: boolean } | null) || {};
-  if (meta.amountMismatch) return transaction; // waiting on an admin
+  const meta = (transaction.meta as { expireTimestamp?: number } | null) || {};
 
   // Past expiry and still unpaid: close it at the gateway so a late payment can't land on an
   // order we've given up on, then re-read the final state.
@@ -61,22 +60,25 @@ export async function syncDeposit(transaction: TxRow, opts: { closeIfExpired?: b
   const expected = toCents(Number(transaction.amount));
   if (order.state === ORDER_STATE.SUCCESS) {
     const paid = order.realAmount ?? order.amount;
-    if (order.amount !== expected || paid !== expected) {
-      // Underpaid/overpaid (e.g. ecashapp personal code): leave it for an admin to settle.
-      await prisma.transaction.update({
-        where: { id: transaction.id },
-        data: {
-          adminNote: `Gateway paid ${(paid / 100).toFixed(2)} vs requested ${(expected / 100).toFixed(2)} — review manually.`,
-          meta: { ...((transaction.meta as object) || {}), ...gatewayMeta, amountMismatch: true, paidCents: paid },
-        },
-      });
-      console.warn(`[ggusonepay] deposit ${transaction.id} amount mismatch: paid ${paid}, expected ${expected}`);
-    } else {
-      const done = await completeDeposit(transaction.id, { ...gatewayMeta, state: order.state });
-      if (done) {
-        const bonus = Number(done.payoutAmount ?? 0);
-        notify(done.userId, "Deposit received", `${money(done.amount)} added to your wallet${bonus > 0 ? ` + ${money(bonus)} bonus` : ""}.`);
-      }
+    // The gateway has confirmed the money arrived, so it's credited straight away — at what was
+    // actually paid when that differs from the order (e.g. an ecashapp user typing their own
+    // amount), with the bonus recomputed on it. No admin step.
+    const mismatch = paid !== expected;
+    if (mismatch) console.warn(`[ggusonepay] deposit ${transaction.id} paid ${paid}c vs requested ${expected}c; crediting the paid amount`);
+    const done = await completeDeposit(
+      transaction.id,
+      { ...gatewayMeta, state: order.state, ...(mismatch ? { paidCents: paid } : {}) },
+      { paidCents: paid }
+    );
+    if (done) {
+      const bonus = Number(done.payoutAmount ?? 0);
+      notify(
+        done.userId,
+        "Deposit received",
+        `${money(done.amount)} added to your wallet${bonus > 0 ? ` + ${money(bonus)} bonus` : ""}.${mismatch ? ` (You sent ${money(paid / 100)}; the order was for ${money(expected / 100)}.)` : ""}`
+      );
+    } else if (paid <= 0) {
+      console.warn(`[ggusonepay] deposit ${transaction.id} reported paid with no amount; left pending`);
     }
   } else if (FINAL_FAILURE_STATES.includes(order.state)) {
     await rejectDeposit(transaction.id, "Payment was not completed.", { ...gatewayMeta, state: order.state });

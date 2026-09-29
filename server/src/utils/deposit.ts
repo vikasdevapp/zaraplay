@@ -8,26 +8,48 @@ import { autoLoadDeposit } from "../lib/gameAccounts";
 // COMPLETED. Shared by admin approval and the payment gateway callback; the status flip is a
 // conditional update inside the same DB transaction, so whichever caller loses a race gets
 // null back and nothing is credited twice.
-export async function completeDeposit(transactionId: string, extraMeta?: Prisma.JsonObject): Promise<Transaction | null> {
+//
+// paidCents: the gateway confirmed a different amount than was requested (e.g. an ecashapp
+// user typing their own amount). The deposit is then credited at what was actually paid, with
+// the bonus recomputed at the same percentage, and the requested amount kept in meta — all in
+// the same DB transaction as the credit.
+export async function completeDeposit(
+  transactionId: string,
+  extraMeta?: Prisma.JsonObject,
+  opts: { paidCents?: number } = {}
+): Promise<Transaction | null> {
   const settings = await getPlatformSettings();
 
   return prisma.$transaction(async (tx) => {
     const transaction = await tx.transaction.findUnique({ where: { id: transactionId } });
     if (!transaction || transaction.type !== "DEPOSIT" || transaction.status !== "PENDING") return null;
 
+    const meta = (transaction.meta as { bonusKind?: string; bonusPercent?: number; isFirstDeposit?: boolean; gameLoad?: { userGameId?: string } } | null) || {};
+    let amount = Number(transaction.amount);
+    let bonusAmount = Number(transaction.payoutAmount || 0);
+    let settle: Prisma.JsonObject = {};
+    if (opts.paidCents !== undefined) {
+      const paid = Math.round(opts.paidCents) / 100;
+      if (!Number.isFinite(paid) || paid <= 0) return null;
+      if (paid !== amount) {
+        settle = { requestedAmount: amount, settledAtPaidAmount: true };
+        amount = paid;
+        bonusAmount = Math.round(paid * (Number(meta.bonusPercent) || 0)) / 100;
+      }
+    }
+
     const claimed = await tx.transaction.updateMany({
       where: { id: transactionId, status: "PENDING" },
       data: {
         status: "COMPLETED",
-        ...(extraMeta ? { meta: { ...((transaction.meta as Prisma.JsonObject) || {}), ...extraMeta } } : {}),
+        amount,
+        payoutAmount: bonusAmount,
+        meta: { ...((transaction.meta as Prisma.JsonObject) || {}), ...(extraMeta || {}), ...settle },
       },
     });
     if (claimed.count === 0) return null;
 
-    const meta = (transaction.meta as { bonusKind?: string; isFirstDeposit?: boolean; gameLoad?: { userGameId?: string } } | null) || {};
-    const bonusAmount = Number(transaction.payoutAmount || 0);
     const bonusKind = meta.bonusKind || "DEPOSIT_BONUS";
-    const amount = Number(transaction.amount);
 
     await tx.wallet.update({
       where: { userId: transaction.userId },

@@ -37,25 +37,12 @@ adminDepositsRouter.post("/:id/approve", async (req: AuthedRequest, res) => {
     return res.status(409).json({ error: "This deposit is paid through the gateway. Use Check status instead." });
   }
 
-  // A mismatch is settled at what the gateway says was actually paid (e.g. an ecashapp user
-  // sending $5 on a $50 order gets $5, not $50), with the bonus worked out on that amount.
-  if (meta.amountMismatch) {
-    const paid = Math.round(Number(meta.paidCents)) / 100;
-    if (!Number.isFinite(paid) || paid <= 0) {
-      return res.status(409).json({ error: "The gateway didn't report a paid amount. Check status first." });
-    }
-    const bonus = Math.round(paid * (Number(meta.bonusPercent) || 0)) / 100;
-    await prisma.transaction.updateMany({
-      where: { id: transaction.id, status: "PENDING" },
-      data: {
-        amount: paid,
-        payoutAmount: bonus,
-        meta: { ...(transaction.meta as object), requestedAmount: Number(transaction.amount), settledAtPaidAmount: true },
-      },
-    });
+  // Older rows parked as a mismatch (before paid deposits were auto-credited) settle at what the
+  // gateway says was actually paid, with the bonus worked out on that amount.
+  if (meta.amountMismatch && !(Number(meta.paidCents) > 0)) {
+    return res.status(409).json({ error: "The gateway didn't report a paid amount. Check status first." });
   }
-
-  const updated = await completeDeposit(transaction.id, { approvedManually: true });
+  const updated = await completeDeposit(transaction.id, { approvedManually: true }, meta.amountMismatch ? { paidCents: Number(meta.paidCents) } : {});
   if (!updated) return res.status(409).json({ error: "This request was already processed." });
 
   await logAudit(req.userId!, "DEPOSIT_APPROVED", {
@@ -95,9 +82,6 @@ adminDepositsRouter.post("/:id/reject", async (req: AuthedRequest, res) => {
       const synced = await syncDeposit(transaction);
       if (synced.status !== "PENDING") {
         return res.status(409).json({ error: `The gateway reports this deposit as ${synced.status.toLowerCase()}.`, transaction: synced });
-      }
-      if ((synced.meta as { amountMismatch?: boolean } | null)?.amountMismatch) {
-        return res.status(409).json({ error: "The user paid a different amount; approve it or settle it in the gateway dashboard." });
       }
       await closePayOrder(transaction.id);
     } catch (err) {
