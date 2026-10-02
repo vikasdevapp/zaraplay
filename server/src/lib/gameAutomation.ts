@@ -54,8 +54,12 @@ async function autoFinish(tx: Tx, requestId: string, data: Prisma.GameRequestUnc
 export async function tryAutoCreateAccount(userGameId: string): Promise<AutoCreateResult> {
   const ug = await prisma.userGame.findUnique({ where: { id: userGameId }, include: { game: true } });
   if (!ug || ug.status !== "PENDING") return { created: false };
+  if (!ug.game.automationProvider) return { created: false }; // manual game — expected, no log
   const client = clientFor(ug.game.automationProvider);
-  if (!client) return { created: false };
+  if (!client) {
+    console.warn(`[juwa-auto] ${ug.game.name} is set to automation but JUWA_BASE_URL/JUWA_AGENT_ID/JUWA_SECRET_KEY are not all set on the server — using the agent queue.`);
+    return { created: false };
+  }
 
   const request = await prisma.gameRequest.findFirst({ where: { userGameId, type: "CREATE_ACCOUNT", status: "PENDING", claimedById: null } });
   if (!request) return { created: false };
@@ -73,6 +77,8 @@ export async function tryAutoCreateAccount(userGameId: string): Promise<AutoCrea
       created = { userId: r.userId, username, password };
     } catch (err) {
       if (err instanceof JuwaError && err.code === 20) continue; // name taken on the platform: try another
+      const detail = err instanceof JuwaError ? `code ${err.code}: ${err.message}` : err instanceof Error ? err.message : String(err);
+      console.warn(`[juwa-auto] addUser failed for ${ug.game.name} (${detail}) — falling back to the agent queue.`);
       return { created: false }; // any other error (IP, permission, network): fall back to agent
     }
   }
@@ -84,7 +90,9 @@ export async function tryAutoCreateAccount(userGameId: string): Promise<AutoCrea
     try {
       await client.recharge(created.userId, firstLoad, `rc_${request.id}`);
       loadApplied = true;
-    } catch {
+    } catch (err) {
+      const detail = err instanceof JuwaError ? `code ${err.code}: ${err.message}` : err instanceof Error ? err.message : String(err);
+      console.warn(`[juwa-auto] account ${created.username} created but first load failed (${detail}) — load queued for an agent.`);
       loadApplied = false;
     }
   }
