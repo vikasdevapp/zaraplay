@@ -203,7 +203,9 @@ export async function requestBalanceCheck(userId: string, userGameId: string) {
   if (ug.status !== "ACTIVE") throw new GameError(400, "This game account isn't ready yet.");
   const open = await prisma.gameRequest.findFirst({ where: { userGameId, type: "BALANCE_CHECK", status: "PENDING" } });
   if (open) return { request: open, alreadyOpen: true };
-  if (ug.balanceSyncedAt && Date.now() - ug.balanceSyncedAt.getTime() < BALANCE_CHECK_COOLDOWN_MS) {
+  // Automated games read the balance with a cheap API call, so they skip the anti-spam cooldown
+  // that exists only to protect the manual agent queue.
+  if (!ug.game.automationProvider && ug.balanceSyncedAt && Date.now() - ug.balanceSyncedAt.getTime() < BALANCE_CHECK_COOLDOWN_MS) {
     const mins = Math.max(1, Math.round((Date.now() - ug.balanceSyncedAt.getTime()) / 60000));
     throw new GameError(429, `Your balance was updated ${mins} min ago. You can ask again in a few minutes.`);
   }

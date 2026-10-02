@@ -12,6 +12,7 @@ import {
   requestRedeem,
   toMoney,
 } from "../lib/gameAccounts";
+import { tryAutoBalanceCheck, tryAutoCreateAccount, tryAutoRecharge, tryAutoResetPassword } from "../lib/gameAutomation";
 
 export const gamesRouter = Router();
 
@@ -97,7 +98,9 @@ gamesRouter.post("/mine", async (req: AuthedRequest, res) => {
   try {
     const amount = parsed.data.amount ? toMoney(parsed.data.amount) : 0;
     const result = await requestGameAccount(req.userId!, parsed.data.gameId, amount);
-    res.status(201).json(result);
+    // Automated game: create the real account now and hand back the login instantly.
+    const auto = await tryAutoCreateAccount(result.userGameId).catch(() => ({ created: false }));
+    res.status(201).json({ ...result, ...auto });
   } catch (err) {
     sendError(res, err);
   }
@@ -110,7 +113,8 @@ gamesRouter.post("/mine/:id/recharge", async (req: AuthedRequest, res) => {
   if (!parsed.success) return res.status(400).json({ error: "Enter an amount." });
   try {
     const request = await requestRecharge(req.userId!, req.params.id, toMoney(parsed.data.amount));
-    res.status(201).json({ request });
+    const loaded = await tryAutoRecharge(request.id).catch(() => false);
+    res.status(201).json({ request, loaded });
   } catch (err) {
     sendError(res, err);
   }
@@ -130,7 +134,8 @@ gamesRouter.post("/mine/:id/redeem", async (req: AuthedRequest, res) => {
 gamesRouter.post("/mine/:id/reset-password", async (req: AuthedRequest, res) => {
   try {
     const request = await requestPasswordReset(req.userId!, req.params.id);
-    res.status(201).json({ request });
+    const done = await tryAutoResetPassword(request.id).catch(() => false);
+    res.status(201).json({ request, done });
   } catch (err) {
     sendError(res, err);
   }
@@ -140,7 +145,8 @@ gamesRouter.post("/mine/:id/reset-password", async (req: AuthedRequest, res) => 
 gamesRouter.post("/mine/:id/balance-check", async (req: AuthedRequest, res) => {
   try {
     const { request, alreadyOpen } = await requestBalanceCheck(req.userId!, req.params.id);
-    res.status(alreadyOpen ? 200 : 201).json({ request, alreadyOpen });
+    const done = alreadyOpen ? false : await tryAutoBalanceCheck(request.id).catch(() => false);
+    res.status(alreadyOpen ? 200 : 201).json({ request, alreadyOpen, done });
   } catch (err) {
     sendError(res, err);
   }

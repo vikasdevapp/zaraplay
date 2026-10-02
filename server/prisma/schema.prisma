@@ -63,6 +63,11 @@ enum GameRequestStatus {
 }
 
 // Agent Desk credit ledger (mirrors the game distributor panel's Recharge / Bonus / Redeem / Free Play).
+// Game platforms we can drive automatically via their agent API. null = fully manual (agents).
+enum GameAutomationProvider {
+  JUWA
+}
+
 enum GameTxType {
   RECHARGE
   BONUS
@@ -200,6 +205,9 @@ model Game {
   // Dashboard warns when backendBalance falls to or below this (0 = no warning).
   backendLowAt     Decimal   @default(0) @db.Decimal(14, 2)
   backendUpdatedAt DateTime?
+  // When set, player actions (create account, load, reset, balance) run through the platform
+  // API instead of the agent queue; failures fall back to a manual agent request.
+  automationProvider GameAutomationProvider?
   userGames UserGame[]
   transactions GameTransaction[]
   topUps       BackendTopUp[]
@@ -225,6 +233,8 @@ model UserGame {
   gamePassword    String?
   balance         Decimal           @default(0) @db.Decimal(12, 2)
   balanceSyncedAt DateTime?
+  // The platform player id returned by the automation API (recharge/withdraw/balance use it).
+  gameUserId      String?
   balanceSyncedById String?
   balanceSyncedBy User?             @relation("GameBalanceSyncer", fields: [balanceSyncedById], references: [id])
   createdAt       DateTime          @default(now())

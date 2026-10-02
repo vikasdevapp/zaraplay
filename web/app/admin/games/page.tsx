@@ -14,10 +14,11 @@ interface Game {
   playUrl: string | null;
   isActive: boolean;
   sortOrder: number;
+  automationProvider: string | null;
   _count: { userGames: number };
 }
 
-const emptyForm = { name: "", imageUrl: "", playUrl: "", isActive: true };
+const emptyForm = { name: "", imageUrl: "", playUrl: "", isActive: true, automationProvider: "" };
 
 export default function AdminGamesPage() {
   const api = useApi();
@@ -58,7 +59,7 @@ export default function AdminGamesPage() {
 
   function startEdit(game: Game) {
     setEditingId(game.id);
-    setForm({ name: game.name, imageUrl: game.imageUrl || "", playUrl: game.playUrl || "", isActive: game.isActive });
+    setForm({ name: game.name, imageUrl: game.imageUrl || "", playUrl: game.playUrl || "", isActive: game.isActive, automationProvider: game.automationProvider || "" });
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -77,6 +78,7 @@ export default function AdminGamesPage() {
         imageUrl: form.imageUrl || undefined,
         playUrl: form.playUrl || undefined,
         isActive: form.isActive,
+        automationProvider: form.automationProvider ? form.automationProvider : null,
       };
       if (editingId) {
         await api(`/api/admin/games/${editingId}`, { method: "PATCH", body: JSON.stringify(payload) });
@@ -129,6 +131,21 @@ export default function AdminGamesPage() {
             onChange={(e) => setForm((f) => ({ ...f, playUrl: e.target.value }))}
           />
         </div>
+
+        <label className="text-xs text-muted block">
+          Automation
+          <select
+            className="input mt-1 sm:w-64"
+            value={form.automationProvider}
+            onChange={(e) => setForm((f) => ({ ...f, automationProvider: e.target.value }))}
+          >
+            <option value="">Manual (agents create &amp; load accounts)</option>
+            <option value="JUWA">Juwa API (instant, automatic)</option>
+          </select>
+          <span className="block text-[11px] text-muted mt-1">
+            Juwa needs JUWA_BASE_URL / JUWA_AGENT_ID / JUWA_SECRET_KEY set on the server and this server&apos;s IP whitelisted. Failures fall back to the agent queue.
+          </span>
+        </label>
 
         <div>
           <label className="text-xs text-muted block mb-1">Logo image</label>

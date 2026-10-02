@@ -15,6 +15,8 @@ interface Game {
   imageUrl: string | null;
   // Set by admins when adding/editing a game; opened by "Play Now".
   playUrl: string | null;
+  // When set, adding this game creates the login instantly (no agent wait).
+  automationProvider: string | null;
 }
 
 type RequestType = "CREATE_ACCOUNT" | "RECHARGE" | "REDEEM" | "PASSWORD_RESET" | "BALANCE_CHECK";
@@ -140,6 +142,8 @@ export default function GamesPage() {
   const [walletBalance, setWalletBalance] = useState(0);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  // Shown after an automated game creates the login instantly.
+  const [added, setAdded] = useState<{ name: string; username: string; password: string; loadPending: boolean } | null>(null);
 
   const [action, setAction] = useState<MoneyAction | null>(null);
   const [amount, setAmount] = useState("");
@@ -190,11 +194,7 @@ export default function GamesPage() {
     setActionError(null);
 
     if (action.kind === "add" && amount.trim() === "") {
-      // Add without a first load.
-      return run(async () => {
-        await api("/api/games/mine", { method: "POST", body: JSON.stringify({ gameId: action.game.id }) });
-        return `${action.game.name} requested. Our team will create your account shortly.`;
-      });
+      return doAdd(action.game, undefined); // add without a first load
     }
     if (!amountValid) {
       setActionError("Enter an amount of at least $1.00.");
@@ -211,15 +211,43 @@ export default function GamesPage() {
     if (needsDeposit) return startDeposit();
 
     if (action.kind === "add") {
-      return run(async () => {
-        await api("/api/games/mine", { method: "POST", body: JSON.stringify({ gameId: action.game.id, amount: parsedAmount }) });
-        return `${action.game.name} requested with ${money(parsedAmount)}. It will be loaded as soon as your account is ready.`;
-      });
+      return doAdd(action.game, parsedAmount);
     }
     return run(async () => {
-      await api(`/api/games/mine/${action.ug.id}/recharge`, { method: "POST", body: JSON.stringify({ amount: parsedAmount }) });
-      return `${money(parsedAmount)} is on its way to ${action.ug.game.name}.`;
+      const res = await api<{ loaded?: boolean }>(`/api/games/mine/${action.ug.id}/recharge`, { method: "POST", body: JSON.stringify({ amount: parsedAmount }) });
+      return res.loaded
+        ? `${money(parsedAmount)} loaded into ${action.ug.game.name} instantly.`
+        : `${money(parsedAmount)} is on its way to ${action.ug.game.name}.`;
     });
+  }
+
+  // Add a game. Automated games create the login instantly; manual ones queue for an agent.
+  async function doAdd(game: Game, amount?: number) {
+    setBusy(true);
+    setActionError(null);
+    try {
+      const res = await api<{ created?: boolean; gameUsername?: string; gamePassword?: string; loadPending?: boolean }>("/api/games/mine", {
+        method: "POST",
+        body: JSON.stringify({ gameId: game.id, ...(amount ? { amount } : {}) }),
+      });
+      setAction(null);
+      setTab("mine");
+      if (res.created && res.gameUsername && res.gamePassword) {
+        setAdded({ name: game.name, username: res.gameUsername, password: res.gamePassword, loadPending: !!res.loadPending });
+      } else {
+        setNotice({
+          type: "success",
+          text: amount
+            ? `${game.name} requested with ${money(amount)}. It will be loaded as soon as your account is ready.`
+            : `${game.name} requested. Our team will set up your account shortly.`,
+        });
+      }
+      await loadAll();
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : "Could not add this game.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function run(fn: () => Promise<string>) {
@@ -301,12 +329,14 @@ export default function GamesPage() {
   async function refreshBalance(ug: UserGame) {
     setNotice(null);
     try {
-      const r = await api<{ alreadyOpen: boolean }>(`/api/games/mine/${ug.id}/balance-check`, { method: "POST" });
+      const r = await api<{ alreadyOpen: boolean; done?: boolean }>(`/api/games/mine/${ug.id}/balance-check`, { method: "POST" });
       setNotice({
         type: "success",
-        text: r.alreadyOpen
-          ? `We're already checking your ${ug.game.name} balance. It will update here shortly.`
-          : `Balance check requested. An agent will read your ${ug.game.name} balance and it will update here.`,
+        text: r.done
+          ? `${ug.game.name} balance updated.`
+          : r.alreadyOpen
+            ? `We're already checking your ${ug.game.name} balance. It will update here shortly.`
+            : `Balance check requested. An agent will read your ${ug.game.name} balance and it will update here.`,
       });
       await loadAll();
     } catch (err) {
@@ -314,11 +344,11 @@ export default function GamesPage() {
     }
   }
 
-  async function simpleRequest(path: string, successText: string) {
+  async function simpleRequest(path: string, successText: string | ((res: { done?: boolean }) => string)) {
     setNotice(null);
     try {
-      await api(path, { method: "POST" });
-      setNotice({ type: "success", text: successText });
+      const res = await api<{ done?: boolean }>(path, { method: "POST" });
+      setNotice({ type: "success", text: typeof successText === "function" ? successText(res) : successText });
       await loadAll();
     } catch (err) {
       setNotice({ type: "error", text: err instanceof ApiError ? err.message : "Something went wrong. Please try again." });
@@ -445,7 +475,11 @@ export default function GamesPage() {
                     💵 Redeem
                   </button>
                   <button
-                    onClick={() => simpleRequest(`/api/games/mine/${ug.id}/reset-password`, "Password reset requested. You'll see the new password here once it's done.")}
+                    onClick={() =>
+                      simpleRequest(`/api/games/mine/${ug.id}/reset-password`, (res) =>
+                        res.done ? "Password reset. Your new password is shown above." : "Password reset requested. You'll see the new password here once it's done."
+                      )
+                    }
                     disabled={!active}
                     className="btn-ghost text-sm py-2 disabled:opacity-40"
                   >
@@ -473,6 +507,7 @@ export default function GamesPage() {
             <div key={g.id} className="card flex flex-col items-center text-center gap-2">
               <GameThumb game={g} className="w-full aspect-square rounded-xl" />
               <p className="text-sm font-medium">{g.name}</p>
+              {g.automationProvider && <span className="text-[10px] text-green-400 font-medium">⚡ Instant setup</span>}
               <button onClick={() => openAction({ kind: "add", game: g })} className="btn-gold text-xs py-2 px-3 w-full">
                 + Add Game
               </button>
@@ -574,6 +609,26 @@ export default function GamesPage() {
                       : `Load ${amountValid ? money(parsedAmount) : ""}`}
             </button>
           </form>
+        </div>
+      )}
+
+      {added && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setAdded(null)} role="dialog" aria-modal="true">
+          <div className="card w-full max-w-sm text-center space-y-3" onClick={(e) => e.stopPropagation()}>
+            <div className="text-4xl">🎉</div>
+            <h2 className="text-xl font-bold">Game Added Successfully</h2>
+            <p className="text-sm text-muted">
+              Your <strong>{added.name}</strong> account is ready. Use this login in the game app.
+            </p>
+            <div className="text-sm space-y-2 text-left">
+              <CopyField label="Game ID" value={added.username} />
+              <CopyField label="Password" value={added.password} secret />
+            </div>
+            {added.loadPending && <p className="text-xs text-yellow-400">Your first load is being processed and will appear shortly.</p>}
+            <button className="btn-primary w-full" onClick={() => setAdded(null)}>
+              Got it
+            </button>
+          </div>
         </div>
       )}
 

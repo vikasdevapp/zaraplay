@@ -3,6 +3,7 @@ import { prisma } from "../lib/prisma";
 import { calcReferralBonus } from "./bonus";
 import { getPlatformSettings } from "../lib/settings";
 import { autoLoadDeposit } from "../lib/gameAccounts";
+import { tryAutoRecharge } from "../lib/gameAutomation";
 
 // Credits a PENDING deposit (amount + stashed bonus + first-deposit referral) and marks it
 // COMPLETED. Shared by admin approval and the payment gateway callback; the status flip is a
@@ -19,8 +20,9 @@ export async function completeDeposit(
   opts: { paidCents?: number } = {}
 ): Promise<Transaction | null> {
   const settings = await getPlatformSettings();
+  let gameLoadRequestId: string | null = null;
 
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const transaction = await tx.transaction.findUnique({ where: { id: transactionId } });
     if (!transaction || transaction.type !== "DEPOSIT" || transaction.status !== "PENDING") return null;
 
@@ -93,11 +95,16 @@ export async function completeDeposit(
 
     // Deposited "for" a game: the whole credit (deposit + bonus) goes straight into a load request.
     if (meta.gameLoad?.userGameId) {
-      await autoLoadDeposit(tx, transaction.userId, meta.gameLoad.userGameId, amount + bonusAmount, transaction.id);
+      const load = await autoLoadDeposit(tx, transaction.userId, meta.gameLoad.userGameId, amount + bonusAmount, transaction.id);
+      if (load) gameLoadRequestId = load.id;
     }
 
     return tx.transaction.findUnique({ where: { id: transactionId } });
   });
+
+  // Outside the DB transaction: if the game is automated, apply the load on the platform now.
+  if (gameLoadRequestId) tryAutoRecharge(gameLoadRequestId).catch(() => {});
+  return result;
 }
 
 // Marks a PENDING deposit REJECTED (nothing was credited, so nothing to undo).

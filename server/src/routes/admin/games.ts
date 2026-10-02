@@ -43,6 +43,8 @@ const imageUrl = z
   .trim()
   .refine((u) => /^\/uploads\/[\w./-]+$/.test(u) || /^https?:\/\/\S+$/i.test(u), "Image must be an uploaded file or an http(s) URL");
 
+const automation = z.enum(["JUWA"]).nullable();
+
 const createSchema = z.object({
   name: z.string().min(1).max(60),
   imageUrl: imageUrl.optional().or(z.literal("")),
@@ -50,6 +52,7 @@ const createSchema = z.object({
   playUrl: webUrl.optional().or(z.literal("")),
   isActive: z.boolean().optional(),
   sortOrder: z.number().int().optional(),
+  automationProvider: automation.optional(),
 });
 
 adminGamesRouter.post("/", async (req: AuthedRequest, res) => {
@@ -68,6 +71,7 @@ adminGamesRouter.post("/", async (req: AuthedRequest, res) => {
       playUrl: parsed.data.playUrl || null,
       isActive: parsed.data.isActive ?? true,
       sortOrder: parsed.data.sortOrder ?? 0,
+      automationProvider: parsed.data.automationProvider ?? null,
     },
   });
   await logAudit(req.userId!, "GAME_CREATED", { targetType: "Game", targetId: game.id, meta: { name: game.name } });
@@ -80,6 +84,7 @@ const updateSchema = z.object({
   playUrl: webUrl.optional().or(z.literal("")),
   isActive: z.boolean().optional(),
   sortOrder: z.number().int().optional(),
+  automationProvider: automation.optional(),
 });
 
 adminGamesRouter.patch("/:id", async (req: AuthedRequest, res) => {
@@ -97,6 +102,7 @@ adminGamesRouter.patch("/:id", async (req: AuthedRequest, res) => {
       ...(parsed.data.playUrl !== undefined ? { playUrl: parsed.data.playUrl || null } : {}),
       ...(parsed.data.isActive !== undefined ? { isActive: parsed.data.isActive } : {}),
       ...(parsed.data.sortOrder !== undefined ? { sortOrder: parsed.data.sortOrder } : {}),
+      ...(parsed.data.automationProvider !== undefined ? { automationProvider: parsed.data.automationProvider } : {}),
     },
   });
   await logAudit(req.userId!, "GAME_UPDATED", { targetType: "Game", targetId: game.id, meta: parsed.data });
