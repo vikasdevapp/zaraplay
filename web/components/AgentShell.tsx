@@ -49,6 +49,7 @@ const NAV: NavItem[] = [
   },
   { href: "/admin/agent-team", label: "Staff Management", icon: "🧑‍💼", adminOnly: true },
   { href: "/agent/staff-activity", label: "Staff Activity", icon: "📋", adminOnly: true },
+  { href: "/agent/staff", label: "My Staff", icon: "🧑‍💼", agentOnly: true },
   { href: "/agent/activity", label: "My Activity", icon: "🕓", agentOnly: true },
   { href: "/agent/change-password", label: "Change Password", icon: "🔒" },
   { href: "/agent/two-factor", label: "Two-Factor (2FA)", icon: "🛡️" },

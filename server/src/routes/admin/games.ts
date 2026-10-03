@@ -23,14 +23,20 @@ adminGamesRouter.post("/upload-image", uploadGameImage.single("image"), (req: Au
 });
 
 adminGamesRouter.get("/", async (_req, res) => {
-  const [games, supportAgents] = await Promise.all([
+  const [games, supportAgents, agents] = await Promise.all([
     prisma.game.findMany({
       orderBy: { sortOrder: "asc" },
-      include: { _count: { select: { userGames: true } }, supportAgent: { select: { id: true, name: true, isOnline: true } } },
+      include: {
+        _count: { select: { userGames: true } },
+        supportAgent: { select: { id: true, name: true, isOnline: true } },
+        agent: { select: { id: true, username: true, fullName: true } },
+      },
     }),
     prisma.supportAgent.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true, isOnline: true } }),
+    // Staff agents (role AGENT) that a game can be assigned to.
+    prisma.user.findMany({ where: { role: "AGENT" }, orderBy: { username: "asc" }, select: { id: true, username: true, fullName: true } }),
   ]);
-  res.json({ games, supportAgents });
+  res.json({ games, supportAgents, agents });
 });
 
 // Shown to players as a clickable link, so only http(s) — never javascript: or data: URLs.
@@ -49,6 +55,8 @@ const imageUrl = z
 const automation = z.enum(["JUWA"]).nullable();
 // "" clears the assignment; otherwise the SupportAgent id this game is supported by.
 const supportAgent = z.string().max(40).nullable();
+// The owning staff agent (User id, role AGENT). null/"" clears it.
+const agentId = z.string().max(40).nullable();
 
 const createSchema = z.object({
   name: z.string().min(1).max(60),
@@ -59,7 +67,17 @@ const createSchema = z.object({
   sortOrder: z.number().int().optional(),
   automationProvider: automation.optional(),
   supportAgentId: supportAgent.optional(),
+  agentId: agentId.optional(),
 });
+
+// Rejects an agentId that isn't a real AGENT account; returns the normalized value (null to clear).
+async function resolveAgentId(value: string | null | undefined): Promise<string | null | undefined> {
+  if (value === undefined) return undefined;
+  if (!value) return null;
+  const agent = await prisma.user.findFirst({ where: { id: value, role: "AGENT" }, select: { id: true } });
+  if (!agent) throw new Error("Chosen agent is not an AGENT account.");
+  return agent.id;
+}
 
 adminGamesRouter.post("/", async (req: AuthedRequest, res) => {
   const parsed = createSchema.safeParse(req.body);
@@ -68,6 +86,13 @@ adminGamesRouter.post("/", async (req: AuthedRequest, res) => {
   const slug = slugify(parsed.data.name);
   const existing = await prisma.game.findUnique({ where: { slug } });
   if (existing) return res.status(409).json({ error: "A game with that name already exists." });
+
+  let resolvedAgentId: string | null | undefined;
+  try {
+    resolvedAgentId = await resolveAgentId(parsed.data.agentId);
+  } catch (err) {
+    return res.status(400).json({ error: err instanceof Error ? err.message : "Invalid agent." });
+  }
 
   const game = await prisma.game.create({
     data: {
@@ -79,6 +104,7 @@ adminGamesRouter.post("/", async (req: AuthedRequest, res) => {
       sortOrder: parsed.data.sortOrder ?? 0,
       automationProvider: parsed.data.automationProvider ?? null,
       supportAgentId: parsed.data.supportAgentId || null,
+      agentId: resolvedAgentId ?? null,
     },
   });
   await logAudit(req.userId!, "GAME_CREATED", { targetType: "Game", targetId: game.id, meta: { name: game.name } });
@@ -93,6 +119,7 @@ const updateSchema = z.object({
   sortOrder: z.number().int().optional(),
   automationProvider: automation.optional(),
   supportAgentId: supportAgent.optional(),
+  agentId: agentId.optional(),
 });
 
 adminGamesRouter.patch("/:id", async (req: AuthedRequest, res) => {
@@ -101,6 +128,13 @@ adminGamesRouter.patch("/:id", async (req: AuthedRequest, res) => {
 
   const game = await prisma.game.findUnique({ where: { id: req.params.id } });
   if (!game) return res.status(404).json({ error: "Game not found." });
+
+  let resolvedAgentId: string | null | undefined;
+  try {
+    resolvedAgentId = await resolveAgentId(parsed.data.agentId);
+  } catch (err) {
+    return res.status(400).json({ error: err instanceof Error ? err.message : "Invalid agent." });
+  }
 
   const game_ = await prisma.game.update({
     where: { id: game.id },
@@ -112,6 +146,7 @@ adminGamesRouter.patch("/:id", async (req: AuthedRequest, res) => {
       ...(parsed.data.sortOrder !== undefined ? { sortOrder: parsed.data.sortOrder } : {}),
       ...(parsed.data.automationProvider !== undefined ? { automationProvider: parsed.data.automationProvider } : {}),
       ...(parsed.data.supportAgentId !== undefined ? { supportAgentId: parsed.data.supportAgentId || null } : {}),
+      ...(resolvedAgentId !== undefined ? { agentId: resolvedAgentId } : {}),
     },
   });
   await logAudit(req.userId!, "GAME_UPDATED", { targetType: "Game", targetId: game.id, meta: parsed.data });

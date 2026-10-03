@@ -5,14 +5,18 @@ import { prisma } from "../../lib/prisma";
 import { requireAuth, requireRole, AuthedRequest } from "../../middleware/auth";
 import { logAudit } from "../../lib/audit";
 import { deskRouter } from "./desk";
+import { agentStaffRouter } from "./staff";
 import { GameError, claimRequest, completeRequest, rejectRequest, releaseRequest, syncBalance, updateCredentials } from "../../lib/gameAccounts";
 
 export const agentRouter = Router();
 
 // AGENT is the day-to-day operations role; ADMIN/MASTER_ADMIN can also work this dashboard.
+// (Scoped SUPPORT-staff access is added with the per-game scoping in the next phase.)
 agentRouter.use(requireAuth, requireRole("AGENT", "ADMIN", "MASTER_ADMIN"));
 
 agentRouter.use("/desk", deskRouter);
+// An agent running their own per-game support staff (AGENT only — enforced inside).
+agentRouter.use("/staff", agentStaffRouter);
 
 const actorOf = (req: AuthedRequest) => ({ id: req.userId!, role: req.role! });
 

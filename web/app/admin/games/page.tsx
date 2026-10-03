@@ -17,6 +17,8 @@ interface Game {
   automationProvider: string | null;
   supportAgentId: string | null;
   supportAgent?: { id: string; name: string; isOnline: boolean } | null;
+  agentId: string | null;
+  agent?: { id: string; username: string; fullName: string } | null;
   _count: { userGames: number };
 }
 
@@ -26,7 +28,13 @@ interface SupportAgentOption {
   isOnline: boolean;
 }
 
-const emptyForm = { name: "", imageUrl: "", playUrl: "", isActive: true, automationProvider: "", supportAgentId: "" };
+interface AgentOption {
+  id: string;
+  username: string;
+  fullName: string;
+}
+
+const emptyForm = { name: "", imageUrl: "", playUrl: "", isActive: true, automationProvider: "", supportAgentId: "", agentId: "" };
 
 export default function AdminGamesPage() {
   const api = useApi();
@@ -35,6 +43,7 @@ export default function AdminGamesPage() {
 
   const [games, setGames] = useState<Game[]>([]);
   const [supportAgents, setSupportAgents] = useState<SupportAgentOption[]>([]);
+  const [agents, setAgents] = useState<AgentOption[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [uploading, setUploading] = useState(false);
@@ -42,9 +51,10 @@ export default function AdminGamesPage() {
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
-    const res = await api<{ games: Game[]; supportAgents: SupportAgentOption[] }>("/api/admin/games");
+    const res = await api<{ games: Game[]; supportAgents: SupportAgentOption[]; agents: AgentOption[] }>("/api/admin/games");
     setGames(res.games);
     setSupportAgents(res.supportAgents || []);
+    setAgents(res.agents || []);
   }, [api]);
 
   useEffect(() => {
@@ -69,7 +79,7 @@ export default function AdminGamesPage() {
 
   function startEdit(game: Game) {
     setEditingId(game.id);
-    setForm({ name: game.name, imageUrl: game.imageUrl || "", playUrl: game.playUrl || "", isActive: game.isActive, automationProvider: game.automationProvider || "", supportAgentId: game.supportAgentId || "" });
+    setForm({ name: game.name, imageUrl: game.imageUrl || "", playUrl: game.playUrl || "", isActive: game.isActive, automationProvider: game.automationProvider || "", supportAgentId: game.supportAgentId || "", agentId: game.agentId || "" });
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -90,6 +100,7 @@ export default function AdminGamesPage() {
         isActive: form.isActive,
         automationProvider: form.automationProvider ? form.automationProvider : null,
         supportAgentId: form.supportAgentId ? form.supportAgentId : null,
+        agentId: form.agentId ? form.agentId : null,
       };
       if (editingId) {
         await api(`/api/admin/games/${editingId}`, { method: "PATCH", body: JSON.stringify(payload) });
@@ -175,6 +186,25 @@ export default function AdminGamesPage() {
           </select>
           <span className="block text-[11px] text-muted mt-1">
             Players open a chat with this person from the game card. Manage the list under Admin → Support.
+          </span>
+        </label>
+
+        <label className="text-xs text-muted block">
+          Owning agent for this game
+          <select
+            className="input mt-1 sm:w-64"
+            value={form.agentId}
+            onChange={(e) => setForm((f) => ({ ...f, agentId: e.target.value }))}
+          >
+            <option value="">No agent (shared queue)</option>
+            {agents.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.fullName} (@{a.username})
+              </option>
+            ))}
+          </select>
+          <span className="block text-[11px] text-muted mt-1">
+            This agent watches everything on this game and can run their own support staff for it. Create agents under Admin → Agent Team.
           </span>
         </label>
 

@@ -136,6 +136,19 @@ model User {
   pushSubscriptions PushSubscription[]
   payoutMethods PayoutMethod[]
   notifications Notification[]
+
+  // Per-game staff hierarchy. An AGENT owns games (Game.agentId -> managedGames). A support
+  // staff member is created by that agent (managerId -> manager) and scoped to one of the
+  // agent's games (staffGameId -> staffGame). Admins see everyone.
+  managedGames  Game[]  @relation("GameAgent")
+  managerId     String?
+  manager       User?   @relation("StaffManager", fields: [managerId], references: [id])
+  staff         User[]  @relation("StaffManager")
+  staffGameId   String?
+  staffGame     Game?   @relation("GameStaff", fields: [staffGameId], references: [id])
+
+  @@index([managerId])
+  @@index([staffGameId])
 }
 
 // An in-app alert in the bell menu. Created alongside the web-push notify (lib/webpush
@@ -231,9 +244,16 @@ model Game {
   // so each game can be supported by its own person (like each game has its own agent).
   supportAgentId String?
   supportAgent   SupportAgent? @relation(fields: [supportAgentId], references: [id])
+  // The staff agent (User, role AGENT) who owns this game and watches everything on it.
+  agentId   String?
+  agent     User?      @relation("GameAgent", fields: [agentId], references: [id])
+  // Support staff scoped to this game (created by its agent).
+  staff     User[]     @relation("GameStaff")
   userGames UserGame[]
   transactions GameTransaction[]
   topUps       BackendTopUp[]
+
+  @@index([agentId])
 }
 
 // A player's account on a third-party game platform. Agents create the real account there
