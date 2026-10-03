@@ -53,9 +53,13 @@ const METHOD_LABELS: Record<string, string> = {
 
 // Cashout method names shown to users (the deposit list uses METHOD_LABELS).
 const PAYOUT_LABELS: Record<string, string> = {
-  ecashapp: "Cash App (cashtag)",
-  chime: "Chime (chimeSign)",
-  card: "Debit Card (cardNumber, cardValid)",
+  ecashapp: "Cash App",
+  chime: "Chime",
+  card: "Debit Card",
+  paypal: "PayPal",
+  venmo: "Venmo",
+  zelle: "Zelle",
+  ach: "Bank Transfer (ACH)",
 };
 
 interface SavedPayoutMethod {
@@ -337,7 +341,7 @@ function WalletContent() {
             />
             {!!options?.cashout.methods.length && (
               <div className="space-y-2">
-                <p className="text-sm text-muted">Withdraw to</p>
+                <p className="text-sm font-medium">Choose withdraw method</p>
                 {savedMethods.map((m) => (
                   <label
                     key={m.id}
