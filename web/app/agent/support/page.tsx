@@ -4,10 +4,10 @@ import { useCallback, useEffect, useRef, useState, FormEvent } from "react";
 import AgentShell from "@/components/AgentShell";
 import { useApi, useApiUpload } from "@/context/AuthContext";
 
-interface Agent {
+interface Game {
   id: string;
   name: string;
-  isOnline: boolean;
+  imageUrl: string | null;
 }
 interface Thread {
   user: { id: string; fullName: string; username: string };
@@ -28,8 +28,8 @@ interface Message {
 export default function AgentSupportPage() {
   const api = useApi();
   const apiUpload = useApiUpload();
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [agentId, setAgentId] = useState<string>("");
+  const [games, setGames] = useState<Game[]>([]);
+  const [gameId, setGameId] = useState<string>("");
   const [threads, setThreads] = useState<Thread[]>([]);
   const [activeUser, setActiveUser] = useState<Thread["user"] | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -38,47 +38,47 @@ export default function AgentSupportPage() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    api<{ agents: Agent[] }>("/api/agent/support/agents")
+    api<{ games: Game[] }>("/api/agent/support/games")
       .then((res) => {
-        setAgents(res.agents);
-        if (res.agents[0]) setAgentId(res.agents[0].id);
+        setGames(res.games);
+        if (res.games[0]) setGameId(res.games[0].id);
       })
       .catch(() => {});
   }, [api]);
 
   const loadThreads = useCallback(
     async (id: string) => {
-      const res = await api<{ threads: Thread[] }>(`/api/agent/support/agents/${id}/threads`);
+      const res = await api<{ threads: Thread[] }>(`/api/agent/support/games/${id}/threads`);
       setThreads(res.threads);
     },
     [api]
   );
 
   useEffect(() => {
-    if (agentId) loadThreads(agentId).catch(() => {});
+    if (gameId) loadThreads(gameId).catch(() => {});
     setActiveUser(null);
     setMessages([]);
-  }, [agentId, loadThreads]);
+  }, [gameId, loadThreads]);
 
   const openThread = useCallback(
     async (user: Thread["user"]) => {
       setActiveUser(user);
-      const res = await api<{ messages: Message[] }>(`/api/agent/support/agents/${agentId}/threads/${user.id}/messages`);
+      const res = await api<{ messages: Message[] }>(`/api/agent/support/games/${gameId}/threads/${user.id}/messages`);
       setMessages(res.messages);
     },
-    [api, agentId]
+    [api, gameId]
   );
 
   async function send(payload: { body?: string; imageUrl?: string }) {
     if (!activeUser) return;
     setSending(true);
     try {
-      const res = await api<{ message: Message }>(`/api/agent/support/agents/${agentId}/threads/${activeUser.id}/messages`, {
+      const res = await api<{ message: Message }>(`/api/agent/support/games/${gameId}/threads/${activeUser.id}/messages`, {
         method: "POST",
         body: JSON.stringify(payload),
       });
       setMessages((m) => [...m, res.message]);
-      loadThreads(agentId).catch(() => {});
+      loadThreads(gameId).catch(() => {});
     } finally {
       setSending(false);
     }
@@ -109,27 +109,23 @@ export default function AgentSupportPage() {
       <h1 className="text-2xl font-bold mb-2">Support</h1>
       <p className="text-sm text-muted mb-4">Player chats for the games you manage. Players can send photos as proof.</p>
 
-      {agents.length === 0 ? (
-        <div className="card text-sm text-muted">
-          No support channel is set for your games yet. An admin links a support agent to a game under Admin → Games.
-        </div>
+      {games.length === 0 ? (
+        <div className="card text-sm text-muted">No games are assigned to you yet. Ask an admin to assign you as the agent for a game (Admin → Games).</div>
       ) : (
         <>
           <div className="flex gap-2 mb-4 flex-wrap">
-            {agents.map((a) => (
+            {games.map((g) => (
               <button
-                key={a.id}
-                onClick={() => setAgentId(a.id)}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium ${agentId === a.id ? "bg-primary text-white" : "bg-surface2 text-muted"}`}
+                key={g.id}
+                onClick={() => setGameId(g.id)}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium ${gameId === g.id ? "bg-primary text-white" : "bg-surface2 text-muted"}`}
               >
-                {a.name}
-                {a.isOnline && <span className="ml-1.5 inline-block w-1.5 h-1.5 rounded-full bg-green-400 align-middle" />}
+                {g.name}
               </button>
             ))}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* Threads */}
             <div className="card p-0 md:col-span-1 max-h-[70vh] overflow-y-auto">
               {threads.length === 0 ? (
                 <p className="text-sm text-muted p-4">No messages yet.</p>
@@ -155,7 +151,6 @@ export default function AgentSupportPage() {
               )}
             </div>
 
-            {/* Conversation */}
             <div className="card p-0 md:col-span-2 flex flex-col h-[70vh]">
               {!activeUser ? (
                 <p className="text-sm text-muted m-auto">Select a conversation.</p>

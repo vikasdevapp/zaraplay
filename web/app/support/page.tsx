@@ -5,10 +5,10 @@ import { useSearchParams } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import { useApi, useApiUpload } from "@/context/AuthContext";
 
-interface Agent {
+interface Game {
   id: string;
   name: string;
-  isOnline: boolean;
+  imageUrl: string | null;
 }
 
 interface Message {
@@ -23,48 +23,40 @@ function SupportContent() {
   const api = useApi();
   const apiUpload = useApiUpload();
   const searchParams = useSearchParams();
-  // Deep link from a game card: /support?agent=<id> opens that game's support chat directly.
-  const wantedAgentId = searchParams.get("agent");
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [activeAgent, setActiveAgent] = useState<Agent | null>(null);
+  // Deep link from a game card: /support?game=<id> opens that game's support chat directly.
+  const wantedGameId = searchParams.get("game");
+  const [games, setGames] = useState<Game[]>([]);
+  const [activeGame, setActiveGame] = useState<Game | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const openAgent = useCallback(
-    async (agent: Agent) => {
-      setActiveAgent(agent);
-      const res = await api<{ messages: Message[] }>(`/api/support/agents/${agent.id}/messages`);
+  const openGame = useCallback(
+    async (game: Game) => {
+      setActiveGame(game);
+      const res = await api<{ messages: Message[] }>(`/api/support/games/${game.id}/messages`);
       setMessages(res.messages);
     },
     [api]
   );
 
   useEffect(() => {
-    api<{ agents: Agent[] }>("/api/support/agents")
+    api<{ games: Game[] }>("/api/support/games")
       .then((res) => {
-        setAgents(res.agents);
-        const wanted = wantedAgentId && res.agents.find((a) => a.id === wantedAgentId);
-        if (wanted) openAgent(wanted).catch(() => {});
+        setGames(res.games);
+        const wanted = wantedGameId && res.games.find((g) => g.id === wantedGameId);
+        if (wanted) openGame(wanted).catch(() => {});
       })
       .catch(() => {});
-    // Only on first load / when the deep-linked agent changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, wantedAgentId]);
-
-  async function handleSend(e: FormEvent) {
-    e.preventDefault();
-    if (!activeAgent || !draft.trim()) return;
-    await send({ body: draft });
-    setDraft("");
-  }
+  }, [api, wantedGameId]);
 
   async function send(payload: { body?: string; imageUrl?: string }) {
-    if (!activeAgent) return;
+    if (!activeGame) return;
     setSending(true);
     try {
-      const res = await api<{ message: Message }>(`/api/support/agents/${activeAgent.id}/messages`, {
+      const res = await api<{ message: Message }>(`/api/support/games/${activeGame.id}/messages`, {
         method: "POST",
         body: JSON.stringify(payload),
       });
@@ -74,49 +66,52 @@ function SupportContent() {
     }
   }
 
+  async function handleSend(e: FormEvent) {
+    e.preventDefault();
+    if (!draft.trim()) return;
+    await send({ body: draft });
+    setDraft("");
+  }
+
   async function attachPhoto(file: File) {
     setSending(true);
     try {
       const { url } = await apiUpload<{ url: string }>("/api/support/upload", file, "image");
       await send({ imageUrl: url });
     } catch {
-      // ignore upload failure; user can retry
+      // ignore
     } finally {
       setSending(false);
       if (fileRef.current) fileRef.current.value = "";
     }
   }
 
-  if (activeAgent) {
+  if (activeGame) {
     return (
       <AppShell>
         <div className="flex flex-col h-[70vh] card p-0 overflow-hidden">
           <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
-            <button onClick={() => setActiveAgent(null)} className="text-muted">
+            <button onClick={() => setActiveGame(null)} className="text-muted">
               ←
             </button>
             <div className="w-9 h-9 rounded-full bg-primary/30 flex items-center justify-center font-semibold">
-              {activeAgent.name.slice(0, 1)}
+              {activeGame.name.slice(0, 1)}
             </div>
             <div>
-              <p className="font-semibold text-sm">{activeAgent.name}</p>
-              <p className="text-xs text-muted">Support Agent</p>
+              <p className="font-semibold text-sm">{activeGame.name} Support</p>
+              <p className="text-xs text-muted">We&apos;ll reply here</p>
             </div>
           </div>
 
           <div className="flex-1 overflow-y-auto px-4 py-4 space-y-2">
             {messages.length === 0 && (
               <p className="text-center text-muted text-sm mt-10">
-                Start a conversation. Message will be delivered to {activeAgent.name}.
+                Start a conversation about {activeGame.name}. You can attach a photo as proof.
               </p>
             )}
             {messages.map((m) => (
               <div key={m.id} className={`flex ${m.sender === "USER" ? "justify-end" : "justify-start"}`}>
-                <div
-                  className={`max-w-[75%] rounded-2xl px-3 py-2 text-sm ${
-                    m.sender === "USER" ? "bg-primary text-white" : "bg-surface2 text-white"
-                  }`}
-                >
+                <div className={`max-w-[75%] rounded-2xl px-3 py-2 text-sm ${m.sender === "USER" ? "bg-primary text-white" : "bg-surface2 text-white"}`}>
                   {m.imageUrl && (
                     // eslint-disable-next-line @next/next/no-img-element
                     <a href={m.imageUrl} target="_blank" rel="noopener noreferrer">
@@ -150,12 +145,7 @@ function SupportContent() {
             >
               📷
             </button>
-            <input
-              className="input flex-1"
-              placeholder="Type a message…"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-            />
+            <input className="input flex-1" placeholder="Type a message…" value={draft} onChange={(e) => setDraft(e.target.value)} />
             <button type="submit" className="btn-primary" disabled={sending}>
               ➤
             </button>
@@ -169,23 +159,24 @@ function SupportContent() {
     <AppShell>
       <div className="space-y-4">
         <div className="card">
-          <h1 className="font-bold text-lg">Talk with agents</h1>
-          <p className="text-sm text-muted">Pick a channel to reach our team</p>
+          <h1 className="font-bold text-lg">Game Support</h1>
+          <p className="text-sm text-muted">Pick a game to chat with its support team</p>
         </div>
-        <div className="card divide-y divide-border p-0">
-          {agents.map((agent) => (
-            <button key={agent.id} onClick={() => openAgent(agent)} className="w-full flex items-center gap-3 px-4 py-3 hover:bg-surface2 text-left">
-              <div className="relative w-10 h-10 rounded-full bg-primary/30 flex items-center justify-center font-semibold">
-                {agent.name.slice(0, 1)}
-                {agent.isOnline && <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-green-400 border-2 border-surface" />}
-              </div>
-              <div>
-                <p className="font-medium text-sm">{agent.name}</p>
-                <p className="text-xs text-muted">Support Agent</p>
-              </div>
-            </button>
-          ))}
-        </div>
+        {games.length === 0 ? (
+          <div className="card text-sm text-muted">Add a game first — then you can chat with its support team here.</div>
+        ) : (
+          <div className="card divide-y divide-border p-0">
+            {games.map((g) => (
+              <button key={g.id} onClick={() => openGame(g)} className="w-full flex items-center gap-3 px-4 py-3 hover:bg-surface2 text-left">
+                <div className="w-10 h-10 rounded-full bg-primary/30 flex items-center justify-center font-semibold">{g.name.slice(0, 1)}</div>
+                <div>
+                  <p className="font-medium text-sm">{g.name}</p>
+                  <p className="text-xs text-muted">Tap to open support</p>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </AppShell>
   );

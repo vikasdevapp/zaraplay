@@ -19,8 +19,6 @@ interface Game {
   playUrl: string | null;
   // When set, adding this game creates the login instantly (no agent wait).
   automationProvider: string | null;
-  // This game's dedicated support contact (null = use the general support page).
-  supportAgent?: { id: string; name: string; isOnline: boolean } | null;
 }
 
 type RequestType = "CREATE_ACCOUNT" | "RECHARGE" | "REDEEM" | "PASSWORD_RESET" | "BALANCE_CHECK";
@@ -530,12 +528,8 @@ export default function GamesPage() {
                 </div>
 
                 <div className="flex items-center justify-between gap-3 mt-2 text-xs">
-                  <Link
-                    href={ug.game.supportAgent ? `/support?agent=${ug.game.supportAgent.id}` : "/support"}
-                    className="text-muted hover:text-white inline-flex items-center gap-1"
-                  >
-                    🎧 {ug.game.supportAgent ? `${ug.game.name} Support` : "Support"}
-                    {ug.game.supportAgent?.isOnline && <span className="w-1.5 h-1.5 rounded-full bg-green-400" />}
+                  <Link href={`/support?game=${ug.game.id}`} className="text-muted hover:text-white inline-flex items-center gap-1">
+                    🎧 {ug.game.name} Support
                   </Link>
                   <button type="button" onClick={() => setShowRules(true)} className="text-primary underline">
                     Deposit &amp; cashout rules

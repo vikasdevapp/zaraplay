@@ -23,20 +23,18 @@ adminGamesRouter.post("/upload-image", uploadGameImage.single("image"), (req: Au
 });
 
 adminGamesRouter.get("/", async (_req, res) => {
-  const [games, supportAgents, agents] = await Promise.all([
+  const [games, agents] = await Promise.all([
     prisma.game.findMany({
       orderBy: { sortOrder: "asc" },
       include: {
         _count: { select: { userGames: true } },
-        supportAgent: { select: { id: true, name: true, isOnline: true } },
         agent: { select: { id: true, username: true, fullName: true } },
       },
     }),
-    prisma.supportAgent.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true, isOnline: true } }),
-    // Staff agents (role AGENT) that a game can be assigned to.
+    // Staff agents (role AGENT) a game can be assigned to; the agent runs the game's support staff.
     prisma.user.findMany({ where: { role: "AGENT" }, orderBy: { username: "asc" }, select: { id: true, username: true, fullName: true } }),
   ]);
-  res.json({ games, supportAgents, agents });
+  res.json({ games, agents });
 });
 
 // Shown to players as a clickable link, so only http(s) — never javascript: or data: URLs.
@@ -53,8 +51,6 @@ const imageUrl = z
   .refine((u) => /^\/uploads\/[\w./-]+$/.test(u) || /^https?:\/\/\S+$/i.test(u), "Image must be an uploaded file or an http(s) URL");
 
 const automation = z.enum(["JUWA"]).nullable();
-// "" clears the assignment; otherwise the SupportAgent id this game is supported by.
-const supportAgent = z.string().max(40).nullable();
 // The owning staff agent (User id, role AGENT). null/"" clears it.
 const agentId = z.string().max(40).nullable();
 
@@ -66,7 +62,6 @@ const createSchema = z.object({
   isActive: z.boolean().optional(),
   sortOrder: z.number().int().optional(),
   automationProvider: automation.optional(),
-  supportAgentId: supportAgent.optional(),
   agentId: agentId.optional(),
 });
 
@@ -103,7 +98,6 @@ adminGamesRouter.post("/", async (req: AuthedRequest, res) => {
       isActive: parsed.data.isActive ?? true,
       sortOrder: parsed.data.sortOrder ?? 0,
       automationProvider: parsed.data.automationProvider ?? null,
-      supportAgentId: parsed.data.supportAgentId || null,
       agentId: resolvedAgentId ?? null,
     },
   });
@@ -118,7 +112,6 @@ const updateSchema = z.object({
   isActive: z.boolean().optional(),
   sortOrder: z.number().int().optional(),
   automationProvider: automation.optional(),
-  supportAgentId: supportAgent.optional(),
   agentId: agentId.optional(),
 });
 
@@ -145,7 +138,6 @@ adminGamesRouter.patch("/:id", async (req: AuthedRequest, res) => {
       ...(parsed.data.isActive !== undefined ? { isActive: parsed.data.isActive } : {}),
       ...(parsed.data.sortOrder !== undefined ? { sortOrder: parsed.data.sortOrder } : {}),
       ...(parsed.data.automationProvider !== undefined ? { automationProvider: parsed.data.automationProvider } : {}),
-      ...(parsed.data.supportAgentId !== undefined ? { supportAgentId: parsed.data.supportAgentId || null } : {}),
       ...(resolvedAgentId !== undefined ? { agentId: resolvedAgentId } : {}),
     },
   });

@@ -252,6 +252,7 @@ model Game {
   userGames UserGame[]
   transactions GameTransaction[]
   topUps       BackendTopUp[]
+  chatMessages ChatMessage[]
 
   @@index([agentId])
 }
@@ -338,8 +339,12 @@ model ChatMessage {
   id        String        @id @default(cuid())
   userId    String
   user      User          @relation("UserChats", fields: [userId], references: [id])
-  agentId   String
-  agent     SupportAgent  @relation(fields: [agentId], references: [id])
+  // Support is per game: a thread is (player, game), handled by the game's agent and their staff.
+  gameId    String?
+  game      Game?         @relation(fields: [gameId], references: [id])
+  // Legacy persona link (pre per-game support); kept nullable for old rows.
+  agentId   String?
+  agent     SupportAgent? @relation(fields: [agentId], references: [id])
   sender    String // "USER" | "AGENT"
   // Staff account that typed an AGENT reply (null for user messages and pre-tracking replies).
   sentById  String?
@@ -350,6 +355,7 @@ model ChatMessage {
   createdAt DateTime      @default(now())
 
   @@index([sentById, createdAt])
+  @@index([gameId, userId, createdAt])
 }
 
 model BroadcastMessage {
