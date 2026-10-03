@@ -31,6 +31,20 @@ export function gameIdWhere(ids: string[] | null) {
   return ids === null ? {} : { gameId: { in: ids } };
 }
 
+/**
+ * The support-agent (chat persona) ids an actor may handle, or `null` for all (admins). These are
+ * the SupportAgents attached to the actor's scoped games.
+ */
+export async function scopedSupportAgentIds(actor: ScopeActor): Promise<string[] | null> {
+  const games = await scopedGameIds(actor);
+  if (games === null) return null;
+  const rows = await prisma.game.findMany({
+    where: { id: { in: games }, supportAgentId: { not: null } },
+    select: { supportAgentId: true },
+  });
+  return [...new Set(rows.map((r) => r.supportAgentId!).filter(Boolean))];
+}
+
 /** A Prisma `where` fragment limiting the Game table's own `id` to the actor's scope. */
 export function ownGameWhere(ids: string[] | null) {
   return ids === null ? {} : { id: { in: ids } };

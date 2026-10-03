@@ -6,6 +6,7 @@ import { requireAuth, requireRole, AuthedRequest } from "../../middleware/auth";
 import { logAudit } from "../../lib/audit";
 import { deskRouter } from "./desk";
 import { agentStaffRouter } from "./staff";
+import { agentSupportRouter } from "./support";
 import { makeCashoutsRouter } from "../admin/cashouts";
 import { scopedGameIds, gameIdWhere, nestedGameIdWhere, playerInScopeWhere } from "../../lib/gameScope";
 import { GameError, claimRequest, completeRequest, rejectRequest, releaseRequest, syncBalance, updateCredentials } from "../../lib/gameAccounts";
@@ -31,6 +32,8 @@ agentRouter.use("/desk", deskRouter);
 agentRouter.use("/staff", agentStaffRouter);
 // Cashouts for the actor's games only (same logic as the admin panel, scoped by the middleware).
 agentRouter.use("/cashouts", makeCashoutsRouter());
+// Per-game support inbox (scoped to the chat personas of the actor's games).
+agentRouter.use("/support", agentSupportRouter);
 
 const actorOf = (req: AuthedRequest) => ({ id: req.userId!, role: req.role! });
 

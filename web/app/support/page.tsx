@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState, useCallback, FormEvent, Suspense } from "react";
+import { useEffect, useRef, useState, useCallback, FormEvent, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import AppShell from "@/components/AppShell";
-import { useApi } from "@/context/AuthContext";
+import { useApi, useApiUpload } from "@/context/AuthContext";
 
 interface Agent {
   id: string;
@@ -15,11 +15,13 @@ interface Message {
   id: string;
   sender: "USER" | "AGENT";
   body: string;
+  imageUrl?: string | null;
   createdAt: string;
 }
 
 function SupportContent() {
   const api = useApi();
+  const apiUpload = useApiUpload();
   const searchParams = useSearchParams();
   // Deep link from a game card: /support?agent=<id> opens that game's support chat directly.
   const wantedAgentId = searchParams.get("agent");
@@ -28,6 +30,7 @@ function SupportContent() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const openAgent = useCallback(
     async (agent: Agent) => {
@@ -53,16 +56,34 @@ function SupportContent() {
   async function handleSend(e: FormEvent) {
     e.preventDefault();
     if (!activeAgent || !draft.trim()) return;
+    await send({ body: draft });
+    setDraft("");
+  }
+
+  async function send(payload: { body?: string; imageUrl?: string }) {
+    if (!activeAgent) return;
     setSending(true);
     try {
       const res = await api<{ message: Message }>(`/api/support/agents/${activeAgent.id}/messages`, {
         method: "POST",
-        body: JSON.stringify({ body: draft }),
+        body: JSON.stringify(payload),
       });
       setMessages((m) => [...m, res.message]);
-      setDraft("");
     } finally {
       setSending(false);
+    }
+  }
+
+  async function attachPhoto(file: File) {
+    setSending(true);
+    try {
+      const { url } = await apiUpload<{ url: string }>("/api/support/upload", file, "image");
+      await send({ imageUrl: url });
+    } catch {
+      // ignore upload failure; user can retry
+    } finally {
+      setSending(false);
+      if (fileRef.current) fileRef.current.value = "";
     }
   }
 
@@ -96,6 +117,12 @@ function SupportContent() {
                     m.sender === "USER" ? "bg-primary text-white" : "bg-surface2 text-white"
                   }`}
                 >
+                  {m.imageUrl && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <a href={m.imageUrl} target="_blank" rel="noopener noreferrer">
+                      <img src={m.imageUrl} alt="attachment" className="rounded-lg max-h-56 mb-1" />
+                    </a>
+                  )}
                   {m.body}
                 </div>
               </div>
@@ -103,6 +130,26 @@ function SupportContent() {
           </div>
 
           <form onSubmit={handleSend} className="flex items-center gap-2 px-3 py-3 border-t border-border">
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) attachPhoto(f);
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              disabled={sending}
+              className="w-10 h-10 shrink-0 rounded-full bg-surface2 border border-border flex items-center justify-center text-lg disabled:opacity-40"
+              aria-label="Attach photo"
+              title="Attach a photo"
+            >
+              📷
+            </button>
             <input
               className="input flex-1"
               placeholder="Type a message…"

@@ -344,7 +344,9 @@ model ChatMessage {
   // Staff account that typed an AGENT reply (null for user messages and pre-tracking replies).
   sentById  String?
   sentBy    User?         @relation("SupportReplies", fields: [sentById], references: [id])
-  body      String
+  body      String        @default("")
+  // Optional image attachment (proof photos); site-relative /uploads/chat/... path.
+  imageUrl  String?
   createdAt DateTime      @default(now())
 
   @@index([sentById, createdAt])

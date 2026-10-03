@@ -65,7 +65,10 @@ adminSupportRouter.get("/agents/:agentId/threads/:userId/messages", async (req, 
   res.json({ messages });
 });
 
-const replySchema = z.object({ body: z.string().min(1).max(2000) });
+const chatImageUrl = z.string().regex(/^\/uploads\/chat\/[\w.-]+$/, "Invalid image.");
+const replySchema = z
+  .object({ body: z.string().max(2000).optional(), imageUrl: chatImageUrl.optional() })
+  .refine((d) => (d.body && d.body.trim()) || d.imageUrl, "Message cannot be empty.");
 
 adminSupportRouter.post("/agents/:agentId/threads/:userId/messages", async (req: AuthedRequest, res) => {
   const parsed = replySchema.safeParse(req.body);
@@ -77,7 +80,8 @@ adminSupportRouter.post("/agents/:agentId/threads/:userId/messages", async (req:
       userId: req.params.userId,
       agentId: req.params.agentId,
       sender: "AGENT",
-      body: parsed.data.body,
+      body: parsed.data.body?.trim() || "",
+      imageUrl: parsed.data.imageUrl || null,
       sentById: req.userId!,
     },
     include: { sentBy: { select: { fullName: true, username: true } } },

@@ -42,6 +42,7 @@ const NAV: NavItem[] = [
   { href: "/agent/game-balances", label: "Games Balance", icon: "📦" },
   { href: "/agent/game-records", label: "Game Records", icon: "📊" },
   { href: "/agent/cashouts", label: "Cashouts", icon: "💸" },
+  { href: "/agent/support", label: "Support", icon: "🎧" },
   {
     label: "Recharge Ledger",
     icon: "💲",

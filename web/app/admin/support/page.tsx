@@ -22,6 +22,7 @@ interface Message {
   id: string;
   sender: "USER" | "AGENT";
   body: string;
+  imageUrl?: string | null;
   createdAt: string;
   sentBy?: { fullName: string; username: string } | null;
 }
@@ -128,6 +129,12 @@ export default function AdminSupportPage() {
                 {messages.map((m) => (
                   <div key={m.id} className={`flex flex-col ${m.sender === "AGENT" ? "items-end" : "items-start"}`}>
                     <div className={`max-w-[75%] rounded-2xl px-3 py-2 text-sm ${m.sender === "AGENT" ? "bg-primary text-white" : "bg-surface2 text-white"}`}>
+                      {m.imageUrl && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <a href={m.imageUrl} target="_blank" rel="noopener noreferrer">
+                          <img src={m.imageUrl} alt="attachment" className="rounded-lg max-h-56 mb-1" />
+                        </a>
+                      )}
                       {m.body}
                     </div>
                     {/* Staff-only: which team member actually sent the reply. Users just see the agent. */}
