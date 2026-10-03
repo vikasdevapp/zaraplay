@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, ReactNode } from "react";
 import { useApi, useAuth } from "@/context/AuthContext";
+import ConfirmDialog from "@/components/ConfirmDialog";
 
 interface NavLink {
   href: string;
@@ -70,6 +71,7 @@ export default function AgentShell({ children }: { children: ReactNode }) {
   const isAgent = user?.role === "AGENT";
   const [pendingRequests, setPendingRequests] = useState(0);
   const [open, setOpen] = useState<Record<string, boolean>>({});
+  const [confirmLogout, setConfirmLogout] = useState(false);
 
   useEffect(() => {
     if (loading) return;
@@ -162,13 +164,26 @@ export default function AgentShell({ children }: { children: ReactNode }) {
           <p className="hidden md:block text-xs text-muted mb-2">
             {user.fullName} · @{user.username}
           </p>
-          <button onClick={() => logout()} className="text-sm text-muted hover:text-white">
+          <button onClick={() => setConfirmLogout(true)} className="text-sm text-muted hover:text-white">
             Logout
           </button>
         </div>
       </aside>
 
       <main className="flex-1 min-w-0 px-4 py-6 max-w-7xl w-full mx-auto">{children}</main>
+
+      <ConfirmDialog
+        open={confirmLogout}
+        title="Log out?"
+        message="You'll need to sign in again to get back into the desk."
+        confirmLabel="Log out"
+        danger
+        onConfirm={() => {
+          setConfirmLogout(false);
+          logout();
+        }}
+        onCancel={() => setConfirmLogout(false)}
+      />
     </div>
   );
 }

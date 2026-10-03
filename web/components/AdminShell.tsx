@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, ReactNode } from "react";
+import { useEffect, useState, ReactNode } from "react";
 import { useAuth } from "@/context/AuthContext";
 import Logo from "@/components/Logo";
+import ConfirmDialog from "@/components/ConfirmDialog";
 
 const NAV_ITEMS = [
   { href: "/admin", label: "Dashboard", icon: "📊" },
@@ -44,6 +45,7 @@ export default function AdminShell({ children }: { children: ReactNode }) {
   const { user, loading, logout } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
+  const [confirmLogout, setConfirmLogout] = useState(false);
 
   const allowed = !!user && PANEL_ROLES.includes(user.role);
 
@@ -92,13 +94,26 @@ export default function AdminShell({ children }: { children: ReactNode }) {
           ))}
         </nav>
         <div className="hidden md:block px-4 mt-4">
-          <button onClick={() => logout()} className="text-sm text-muted hover:text-white">
+          <button onClick={() => setConfirmLogout(true)} className="text-sm text-muted hover:text-white">
             Logout
           </button>
         </div>
       </aside>
 
       <main className="flex-1 px-4 py-6 max-w-6xl w-full mx-auto">{children}</main>
+
+      <ConfirmDialog
+        open={confirmLogout}
+        title="Log out?"
+        message="You'll need to sign in again to get back into the panel."
+        confirmLabel="Log out"
+        danger
+        onConfirm={() => {
+          setConfirmLogout(false);
+          logout();
+        }}
+        onCancel={() => setConfirmLogout(false)}
+      />
     </div>
   );
 }
