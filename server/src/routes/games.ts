@@ -12,7 +12,7 @@ import {
   requestRedeem,
   toMoney,
 } from "../lib/gameAccounts";
-import { tryAutoBalanceCheck, tryAutoCreateAccount, tryAutoRecharge, tryAutoResetPassword } from "../lib/gameAutomation";
+import { autoWithdrawFromGame, isAutomated, tryAutoBalanceCheck, tryAutoCreateAccount, tryAutoRecharge, tryAutoResetPassword } from "../lib/gameAutomation";
 
 export const gamesRouter = Router();
 
@@ -124,7 +124,17 @@ gamesRouter.post("/mine/:id/redeem", async (req: AuthedRequest, res) => {
   const parsed = moneySchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Enter an amount." });
   try {
-    const request = await requestRedeem(req.userId!, req.params.id, toMoney(parsed.data.amount));
+    const amount = toMoney(parsed.data.amount);
+    // Automated games (Juwa, ...) settle the withdrawal instantly: real balance, cashout rules,
+    // payout to the wallet — no agent. If the platform is unreachable we fall back to the queue.
+    const ug = await prisma.userGame.findFirst({ where: { id: req.params.id, userId: req.userId! }, include: { game: true } });
+    if (ug && ug.status === "ACTIVE" && isAutomated(ug.game) && ug.gameUserId) {
+      const out = await autoWithdrawFromGame(req.userId!, ug.id, amount);
+      if (out.status === "done") return res.status(200).json({ auto: true, ...out });
+      if (out.status === "rejected") return res.status(400).json({ error: out.reason, min: out.min, max: out.max, balance: out.balance });
+      // out.status === "fallback": drop through to the agent queue below.
+    }
+    const request = await requestRedeem(req.userId!, req.params.id, amount);
     res.status(201).json({ request });
   } catch (err) {
     sendError(res, err);

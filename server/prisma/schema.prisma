@@ -232,6 +232,11 @@ model UserGame {
   gameUsername    String?
   gamePassword    String?
   balance         Decimal           @default(0) @db.Decimal(12, 2)
+  // Cashout tier basis for the active load: loadDeposit (the recharge amount) picks the tier
+  // boundary; loadTotal (deposit + bonus) is what the min/max multipliers apply to. Reset to
+  // the leftover after a withdrawal.
+  loadDeposit     Decimal           @default(0) @db.Decimal(12, 2)
+  loadTotal       Decimal           @default(0) @db.Decimal(12, 2)
   balanceSyncedAt DateTime?
   // The platform player id returned by the automation API (recharge/withdraw/balance use it).
   gameUserId      String?
@@ -259,6 +264,8 @@ model GameRequest {
   // REDEEM: credits the player asked for; completedAmount is what the agent actually redeemed.
   amount         Decimal           @default(0) @db.Decimal(12, 2)
   completedAmount Decimal?         @db.Decimal(12, 2)
+  // For a load funded by a deposit-and-load: the deposit amount (loadTotal basis = amount).
+  loadDeposit     Decimal?         @db.Decimal(12, 2)
   // The wallet ledger row this request moves money through (GAME_RECHARGE / GAME_REDEEM).
   transactionId  String?           @unique
   // An agent claims a request before working it, so two agents never load the same credits.

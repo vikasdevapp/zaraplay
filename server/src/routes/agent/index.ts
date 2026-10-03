@@ -5,8 +5,6 @@ import { prisma } from "../../lib/prisma";
 import { requireAuth, requireRole, AuthedRequest } from "../../middleware/auth";
 import { logAudit } from "../../lib/audit";
 import { deskRouter } from "./desk";
-import { executeAutoWithdraw, isAutomated } from "../../lib/gameAutomation";
-import { JuwaError } from "../../lib/juwa";
 import { GameError, claimRequest, completeRequest, rejectRequest, releaseRequest, syncBalance, updateCredentials } from "../../lib/gameAccounts";
 
 export const agentRouter = Router();
@@ -129,22 +127,9 @@ agentRouter.post("/requests/:id/complete", async (req: AuthedRequest, res) => {
   if (!parsed.success) return res.status(400).json({ error: "Invalid input." });
   try {
     const input = { ...parsed.data };
-    // Approving a redeem on an automated game (and no manual amounts entered): pull the money
-    // out through the platform API, then record what actually came out.
-    if (input.redeemedAmount === undefined) {
-      const pending = await prisma.gameRequest.findUnique({ where: { id: req.params.id }, include: { userGame: { include: { game: true } } } });
-      if (pending?.type === "REDEEM" && pending.status === "PENDING" && isAutomated(pending.userGame.game)) {
-        try {
-          const out = await executeAutoWithdraw(pending, pending.userGame);
-          if (out.payout <= 0) return res.status(400).json({ error: `The player's game balance is $${out.realBalance.toFixed(2)} — nothing to redeem.` });
-          input.redeemedAmount = out.payout;
-          input.remainingBalance = Math.round((out.realBalance - out.payout) * 100) / 100;
-        } catch (err) {
-          const msg = err instanceof JuwaError ? err.message : "the game platform could not be reached";
-          return res.status(502).json({ error: `Automatic redeem failed (${msg}). Do it on the platform and enter the amounts manually.`, manualFallback: true });
-        }
-      }
-    }
+    // Redeems on automated games are settled instantly for the player (see autoWithdrawFromGame);
+    // anything that reaches this queue is either a manual game or a redeem that fell back because
+    // the platform was unreachable, so the agent completes it by entering the amounts.
     const request = await completeRequest(req.params.id, actorOf(req), input);
     await logAudit(req.userId!, `GAME_${request.type}_COMPLETED`, {
       targetType: "GameRequest",

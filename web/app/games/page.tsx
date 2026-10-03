@@ -206,8 +206,15 @@ export default function GamesPage() {
 
     if (action.kind === "redeem") {
       return run(async () => {
-        await api(`/api/games/mine/${action.ug.id}/redeem`, { method: "POST", body: JSON.stringify({ amount: parsedAmount }) });
-        return `Redeem of ${money(parsedAmount)} requested. An agent will check your game balance and move it to your wallet.`;
+        const res = await api<{ auto?: boolean; status?: string; payout?: number; forfeit?: number }>(
+          `/api/games/mine/${action.ug.id}/redeem`,
+          { method: "POST", body: JSON.stringify({ amount: parsedAmount }) }
+        );
+        if (res.auto && res.status === "done") {
+          const forfeit = res.forfeit && res.forfeit > 0 ? ` $${res.forfeit.toFixed(2)} above the cashout cap was forfeited.` : "";
+          return `${money(res.payout ?? 0)} was added to your wallet instantly.${forfeit}`;
+        }
+        return `Withdrawal of ${money(parsedAmount)} requested. An agent will move it to your wallet shortly.`;
       });
     }
 

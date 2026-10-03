@@ -1,8 +1,10 @@
-import { GameRequest, Prisma, UserGame } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { sendPushToUser } from "./webpush";
-import { recordGameTx } from "./gameAccounts";
+import { loadBasis, recordGameTx } from "./gameAccounts";
 import { getJuwaClient, JuwaClient, JuwaError } from "./juwa";
+import { getPlatformSettings } from "./settings";
+import { settleWithdraw } from "./cashoutRules";
 
 /**
  * Drives game platforms through their agent API so player actions happen instantly instead of
@@ -105,6 +107,7 @@ export async function tryAutoCreateAccount(userGameId: string): Promise<AutoCrea
     });
     if (!finished) return; // an agent grabbed it first; leave their flow alone
 
+    const basis = loadApplied ? loadBasis(request) : { loadDeposit: 0, loadTotal: 0 };
     await tx.userGame.update({
       where: { id: ug.id },
       data: {
@@ -113,6 +116,8 @@ export async function tryAutoCreateAccount(userGameId: string): Promise<AutoCrea
         gamePassword: created!.password,
         gameUserId: created!.userId,
         balance: loadApplied ? firstLoad : 0,
+        loadDeposit: basis.loadDeposit,
+        loadTotal: basis.loadTotal,
         balanceSyncedAt: new Date(),
       },
     });
@@ -123,7 +128,7 @@ export async function tryAutoCreateAccount(userGameId: string): Promise<AutoCrea
     } else if (firstLoad > 0 && !loadApplied && request.transactionId) {
       // Account exists but the load didn't go through: hand the held money to the agent queue.
       await tx.gameRequest.update({ where: { id: request.id }, data: { transactionId: null } });
-      await tx.gameRequest.create({ data: { userId: ug.userId!, userGameId: ug.id, type: "RECHARGE", amount: firstLoad, transactionId: request.transactionId } });
+      await tx.gameRequest.create({ data: { userId: ug.userId!, userGameId: ug.id, type: "RECHARGE", amount: firstLoad, transactionId: request.transactionId, loadDeposit: request.loadDeposit } });
     }
   });
 
@@ -147,7 +152,8 @@ export async function tryAutoRecharge(requestId: string): Promise<boolean> {
 
   const notify = await prisma.$transaction(async (tx) => {
     if (!(await autoFinish(tx, request.id, { status: "COMPLETED", completedAmount: amount, agentNote: "Loaded automatically on the game platform." }))) return null;
-    const loaded = await tx.userGame.update({ where: { id: ug.id }, data: { balance: { increment: amount } } });
+    const basis = loadBasis(request);
+    const loaded = await tx.userGame.update({ where: { id: ug.id }, data: { balance: { increment: amount }, loadDeposit: { increment: basis.loadDeposit }, loadTotal: { increment: basis.loadTotal } } });
     if (request.transactionId) await tx.transaction.update({ where: { id: request.transactionId }, data: { status: "COMPLETED" } });
     await recordGameTx(tx, { type: "RECHARGE", source: "WEB", gameId: ug.gameId, userGameId: ug.id, gameUsername: ug.gameUsername!, amount, balanceAfter: Number(loaded.balance), staffId: null, gameRequestId: request.id });
     return `$${amount.toFixed(2)} has been loaded into ${ug.game.name}.`;
@@ -207,20 +213,85 @@ export async function tryAutoBalanceCheck(requestId: string): Promise<boolean> {
   return done;
 }
 
-/**
- * An agent approved a redeem on an automated game: pull the money out via the API and credit the
- * wallet. Reads the real balance first (capping the payout at it) and forces the player offline
- * so the withdraw isn't blocked. Returns the real balance read, or throws a JuwaError to let the
- * agent fall back to a manual redeem.
- */
-export async function executeAutoWithdraw(request: GameRequest, ug: UserGame & { game: { automationProvider: string | null } }) {
-  const client = clientFor(ug.game.automationProvider);
-  if (!client || !ug.gameUserId) throw new JuwaError(-1, "Automation is not available for this game.", true);
+export type AutoWithdrawResult =
+  // Paid out instantly: payout credited to the wallet, forfeit kept by the house, leftover re-tiered.
+  | { status: "done"; payout: number; forfeit: number; leftover: number; min: number; max: number | null; balance: number }
+  // Rules not met (e.g. playthrough) — nothing moved; `reason` is the player-facing message.
+  | { status: "rejected"; reason: string; min: number; max: number | null; balance: number }
+  // The game platform couldn't be reached; the caller should queue the redeem for an agent.
+  | { status: "fallback" };
 
-  await client.playerOffline(ug.gameUserId).catch(() => {}); // best effort; withdraw will tell us if still in game
-  const realBalance = await client.userBalance(ug.gameUserId);
-  const payout = Math.min(Number(request.amount), realBalance);
-  if (payout <= 0) return { realBalance, payout: 0, transactionId: null };
-  const { transactionId } = await client.withdraw(ug.gameUserId, payout, `wd_${request.id}`);
-  return { realBalance, payout, transactionId };
+/**
+ * Player tapped "Withdraw Credits" on an automated game. Reads the real balance live, applies the
+ * cashout tier rules, and — when eligible — pulls the money out via the API and credits the wallet,
+ * all without an agent. Anything above the tier cap is forfeited; whatever stays in the game
+ * re-tiers as the next load basis. If the platform can't be reached it returns "fallback" so the
+ * caller can hand the redeem to the agent queue instead (automation is the fast path, never a wall).
+ */
+export async function autoWithdrawFromGame(userId: string, userGameId: string, requested: number): Promise<AutoWithdrawResult> {
+  const ug = await prisma.userGame.findFirst({ where: { id: userGameId, userId }, include: { game: true } });
+  if (!ug || !ug.gameUserId || ug.status !== "ACTIVE") return { status: "fallback" };
+  const client = clientFor(ug.game.automationProvider);
+  if (!client) return { status: "fallback" };
+
+  // Read the live balance (and force the player offline so the later withdraw isn't blocked).
+  let realBalance: number;
+  try {
+    await client.playerOffline(ug.gameUserId).catch(() => {});
+    realBalance = await client.userBalance(ug.gameUserId);
+  } catch (err) {
+    const detail = err instanceof JuwaError ? `code ${err.code}: ${err.message}` : err instanceof Error ? err.message : String(err);
+    console.warn(`[juwa-auto] balance read failed for withdraw on ${ug.game.name} (${detail}) — handing the redeem to the agent queue.`);
+    return { status: "fallback" };
+  }
+
+  // Keep our recorded balance honest regardless of the outcome.
+  await prisma.userGame.update({ where: { id: ug.id }, data: { balance: realBalance, balanceSyncedAt: new Date() } }).catch(() => {});
+
+  const settings = await getPlatformSettings();
+  const s = settleWithdraw(Number(ug.loadDeposit), Number(ug.loadTotal), realBalance, requested, settings);
+  if (!s.eligible) return { status: "rejected", reason: s.reason!, min: s.min, max: s.max, balance: realBalance };
+
+  // Pull out everything that isn't staying in the game: the payout plus any forfeited overflow.
+  const pulled = Math.round((s.payout + s.forfeit) * 100) / 100;
+  try {
+    if (pulled > 0) await client.withdraw(ug.gameUserId, pulled, `wd_${ug.id}_${Date.now()}`);
+  } catch (err) {
+    const detail = err instanceof JuwaError ? `code ${err.code}: ${err.message}` : err instanceof Error ? err.message : String(err);
+    console.warn(`[juwa-auto] withdraw API failed on ${ug.game.name} (${detail}) — handing the redeem to the agent queue.`);
+    return { status: "fallback" };
+  }
+
+  const note = s.forfeit > 0 ? `Auto-withdraw: $${s.forfeit.toFixed(2)} forfeited above the cashout cap.` : "Withdrawn automatically from the game platform.";
+  await prisma.$transaction(async (tx) => {
+    const t = await tx.transaction.create({
+      data: {
+        userId,
+        type: "GAME_REDEEM",
+        amount: s.payout,
+        status: "COMPLETED",
+        meta: { userGameId: ug.id, gameId: ug.gameId, requestedAmount: requested, forfeit: s.forfeit, leftover: s.leftover, auto: true },
+      },
+    });
+    const req = await tx.gameRequest.create({
+      data: { userId, userGameId: ug.id, type: "REDEEM", amount: requested, status: "COMPLETED", completedAmount: s.payout, completedAt: new Date(), transactionId: t.id, agentNote: note },
+    });
+    if (s.payout > 0) await tx.wallet.update({ where: { userId }, data: { balance: { increment: s.payout } } });
+    await tx.userGame.update({
+      where: { id: ug.id },
+      // Whatever stays in the game re-tiers as the new load basis for the next withdrawal.
+      data: { balance: s.leftover, loadDeposit: s.leftover, loadTotal: s.leftover, balanceSyncedAt: new Date() },
+    });
+    if (s.payout > 0) {
+      await recordGameTx(tx, { type: "REDEEM", source: "WEB", gameId: ug.gameId, userGameId: ug.id, gameUsername: ug.gameUsername!, amount: s.payout, balanceAfter: s.leftover, staffId: null, gameRequestId: req.id, note });
+    }
+  });
+
+  if (s.payout > 0) {
+    const body = s.forfeit > 0
+      ? `$${s.payout.toFixed(2)} from ${ug.game.name} was added to your wallet. $${s.forfeit.toFixed(2)} above the cashout cap was forfeited.`
+      : `$${s.payout.toFixed(2)} from ${ug.game.name} has been added to your wallet.`;
+    sendPushToUser(userId, { title: "Zara Plays", body }).catch(() => {});
+  }
+  return { status: "done", payout: s.payout, forfeit: s.forfeit, leftover: s.leftover, min: s.min, max: s.max, balance: realBalance };
 }

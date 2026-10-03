@@ -1,6 +1,8 @@
 import { GameRequest, GameTxSource, GameTxType, Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { sendPushToUser } from "./webpush";
+import { getPlatformSettings } from "./settings";
+import { gameCashoutLimits } from "./cashoutRules";
 
 /**
  * Player game accounts on third-party platforms (Juwa, Fire Kirin, ...), worked by agents.
@@ -109,7 +111,10 @@ async function createLoadRequest(
   gameId: string,
   type: "CREATE_ACCOUNT" | "RECHARGE",
   amount: number,
-  source: string
+  source: string,
+  // The deposit that funds the cashout tier (deposit-and-load). Plain loads leave it null and
+  // use the load amount as the basis.
+  loadDeposit?: number
 ) {
   let transactionId: string | null = null;
   if (amount > 0) {
@@ -119,7 +124,14 @@ async function createLoadRequest(
     });
     transactionId = t.id;
   }
-  return tx.gameRequest.create({ data: { userId, userGameId, type, amount, transactionId } });
+  return tx.gameRequest.create({ data: { userId, userGameId, type, amount, transactionId, loadDeposit: loadDeposit ?? null } });
+}
+
+/** The tier basis a completed load sets on the account: deposit for the boundary, amount as total. */
+export function loadBasis(request: { amount: Prisma.Decimal | number; loadDeposit: Prisma.Decimal | number | null }) {
+  const total = Number(request.amount);
+  const deposit = request.loadDeposit != null ? Number(request.loadDeposit) : total;
+  return { loadTotal: total, loadDeposit: deposit };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -140,7 +152,7 @@ export async function requestGameAccount(userId: string, gameId: string, firstLo
         // Re-requesting after a rejection reuses the row; only an unconditional REJECTED -> PENDING flip.
         const flipped = await tx.userGame.updateMany({
           where: { id: existing.id, status: "REJECTED" },
-          data: { status: "PENDING", gameUsername: null, gamePassword: null, balance: 0, balanceSyncedAt: null, balanceSyncedById: null },
+          data: { status: "PENDING", gameUsername: null, gamePassword: null, balance: 0, loadDeposit: 0, loadTotal: 0, balanceSyncedAt: null, balanceSyncedById: null },
         });
         if (!flipped.count) throw new GameError(409, "You already have this game.");
         userGameId = existing.id;
@@ -181,6 +193,17 @@ export async function requestRedeem(userId: string, userGameId: string, requeste
   const amount = toMoney(requested);
   const ug = await ownGame(userId, userGameId);
   if (ug.status !== "ACTIVE") throw new GameError(400, "This game account isn't ready yet.");
+  // Enforce the cashout playthrough rule up front (automated games do this live against the
+  // real balance; here we use the recorded balance so manual redeems can't be filed too early).
+  const settings = await getPlatformSettings();
+  const limits = gameCashoutLimits(Number(ug.loadDeposit), Number(ug.loadTotal), settings);
+  if (limits) {
+    const balance = Number(ug.balance);
+    if (balance < limits.min) {
+      throw new GameError(400, `Keep playing — you need at least $${limits.min.toFixed(2)} in the game to withdraw (you have $${balance.toFixed(2)}).`);
+    }
+    if (amount < limits.min) throw new GameError(400, `Minimum withdrawal is $${limits.min.toFixed(2)}.`);
+  }
   const pending = await prisma.gameRequest.findFirst({ where: { userGameId, type: "REDEEM", status: "PENDING" } });
   if (pending) throw new GameError(409, "You already have a redeem request for this game. Please wait for it to finish.");
   return prisma.gameRequest.create({ data: { userId, userGameId, type: "REDEEM", amount } });
@@ -354,6 +377,7 @@ function completeInTx(requestId: string, actor: Actor, input: CompleteInput) {
         if (!username || !password) throw new GameError(400, "Enter the game username and password you created.");
         await assertLoginFree(tx, ug.gameId, username, ug.id);
         const request = await finishRequest(tx, requestId, actor, { status: "COMPLETED", completedAmount: current.amount, agentNote: note });
+        const basis = loadBasis(request);
         const created = await tx.userGame.update({
           where: { id: ug.id },
           data: {
@@ -361,6 +385,8 @@ function completeInTx(requestId: string, actor: Actor, input: CompleteInput) {
             gameUsername: username,
             gamePassword: password,
             balance: { increment: request.amount },
+            loadDeposit: { increment: basis.loadDeposit },
+            loadTotal: { increment: basis.loadTotal },
             balanceSyncedAt: new Date(),
             balanceSyncedById: actor.id,
             createdById: actor.id,
@@ -386,10 +412,11 @@ function completeInTx(requestId: string, actor: Actor, input: CompleteInput) {
       case "RECHARGE": {
         if (ug.status !== "ACTIVE") throw new GameError(400, "Create this player's game account first (see their Create Account request).");
         const request = await finishRequest(tx, requestId, actor, { status: "COMPLETED", completedAmount: current.amount, agentNote: note });
+        const basis = loadBasis(request);
         const loaded = await tx.userGame.update({
           where: { id: ug.id },
           // Adds to the recorded balance; not a fresh read of it, so balanceSyncedAt stays as is.
-          data: { balance: { increment: request.amount } },
+          data: { balance: { increment: request.amount }, loadDeposit: { increment: basis.loadDeposit }, loadTotal: { increment: basis.loadTotal } },
         });
         if (request.transactionId) await tx.transaction.update({ where: { id: request.transactionId }, data: { status: "COMPLETED" } });
         await recordGameTx(tx, {
@@ -432,7 +459,8 @@ function completeInTx(requestId: string, actor: Actor, input: CompleteInput) {
         await tx.wallet.update({ where: { userId: request.userId }, data: { balance: { increment: redeemedAmount } } });
         await tx.userGame.update({
           where: { id: ug.id },
-          data: { balance: remainingBalance, balanceSyncedAt: new Date(), balanceSyncedById: actor.id },
+          // Whatever stays in the game re-tiers as the new load basis for the next withdrawal.
+          data: { balance: remainingBalance, loadDeposit: remainingBalance, loadTotal: remainingBalance, balanceSyncedAt: new Date(), balanceSyncedById: actor.id },
         });
         await recordGameTx(tx, {
           type: "REDEEM",
@@ -525,10 +553,12 @@ export async function updateCredentials(userGameId: string, gameUsername: string
  * (deposit + bonus). If the game account no longer accepts loads, the money simply stays in
  * the wallet.
  */
-export async function autoLoadDeposit(tx: Tx, userId: string, userGameId: string, amount: number, depositId: string) {
+export async function autoLoadDeposit(tx: Tx, userId: string, userGameId: string, amount: number, depositId: string, depositBasis?: number) {
   const ug = await tx.userGame.findFirst({ where: { id: userGameId, userId, status: { in: ["PENDING", "ACTIVE"] } } });
   if (!ug || amount <= 0) return null;
   const wallet = await tx.wallet.findUnique({ where: { userId } });
   if (!wallet || Number(wallet.balance) < amount) return null;
-  return createLoadRequest(tx, userId, ug.id, ug.gameId, "RECHARGE", Math.round(amount * 100) / 100, `deposit:${depositId}`);
+  // loadTotal basis = deposit + bonus (amount); the tier boundary is set by the deposit alone.
+  const basis = depositBasis != null ? Math.min(Math.round(depositBasis * 100) / 100, Math.round(amount * 100) / 100) : undefined;
+  return createLoadRequest(tx, userId, ug.id, ug.gameId, "RECHARGE", Math.round(amount * 100) / 100, `deposit:${depositId}`, basis);
 }

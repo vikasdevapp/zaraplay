@@ -95,7 +95,7 @@ export async function completeDeposit(
 
     // Deposited "for" a game: the whole credit (deposit + bonus) goes straight into a load request.
     if (meta.gameLoad?.userGameId) {
-      const load = await autoLoadDeposit(tx, transaction.userId, meta.gameLoad.userGameId, amount + bonusAmount, transaction.id);
+      const load = await autoLoadDeposit(tx, transaction.userId, meta.gameLoad.userGameId, amount + bonusAmount, transaction.id, amount);
       if (load) gameLoadRequestId = load.id;
     }
 
