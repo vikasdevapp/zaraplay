@@ -54,7 +54,9 @@ interface HistoryItem {
 }
 
 interface PaymentOptions {
-  deposit: { gateway: boolean; methods: string[] };
+  deposit: { gateway: boolean; methods: string[]; amounts?: Record<string, number[] | null> };
+  minDeposit?: number;
+  maxDeposit?: number;
 }
 
 type MoneyAction = { kind: "add"; game: Game } | { kind: "load"; ug: UserGame } | { kind: "redeem"; ug: UserGame };
@@ -153,6 +155,7 @@ export default function GamesPage() {
   // Deposit-and-load: which game account the deposit is for, and the checkout sheet state.
   const [depositFor, setDepositFor] = useState<{ userGameId: string; amount: number } | null>(null);
   const [payMethods, setPayMethods] = useState<string[]>([]);
+  const [payOptions, setPayOptions] = useState<PaymentOptions | null>(null);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
 
   const loadAll = useCallback(async () => {
@@ -281,6 +284,7 @@ export default function GamesPage() {
       const options = await api<PaymentOptions>("/api/wallet/payment-options");
       if (options.deposit.gateway) {
         setPayMethods(options.deposit.methods);
+        setPayOptions(options);
         setCheckoutError(null);
         setDepositFor({ userGameId, amount: parsedAmount });
         setAction(null);
@@ -298,14 +302,14 @@ export default function GamesPage() {
     }
   }
 
-  async function payWithGateway(method: string) {
+  async function payWithGateway(method: string, amount: number) {
     if (!depositFor) return;
     setCheckoutError(null);
     setBusy(true);
     try {
       const res = await api<{ cashierUrl?: string }>("/api/wallet/deposit", {
         method: "POST",
-        body: JSON.stringify({ amount: depositFor.amount, wayCode: method, deviceId: getDeviceId(), userGameId: depositFor.userGameId }),
+        body: JSON.stringify({ amount, wayCode: method, deviceId: getDeviceId(), userGameId: depositFor.userGameId }),
       });
       if (res.cashierUrl) {
         window.location.href = res.cashierUrl;
@@ -469,10 +473,10 @@ export default function GamesPage() {
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3">
                   <button onClick={() => openAction({ kind: "load", ug })} className="btn-gold text-sm py-2">
-                    ➕ Load
+                    ⬇️ Add Credits
                   </button>
                   <button onClick={() => openAction({ kind: "redeem", ug })} disabled={!active} className="btn-ghost text-sm py-2 disabled:opacity-40">
-                    💵 Redeem
+                    ⬆️ Withdraw Credits
                   </button>
                   <button
                     onClick={() =>
@@ -558,7 +562,7 @@ export default function GamesPage() {
           <form onSubmit={submitAction} className="card w-full max-w-sm space-y-3" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <h2 className="font-bold">
-                {action.kind === "add" ? `Add ${action.game.name}` : action.kind === "load" ? `Load ${action.ug.game.name}` : `Redeem from ${action.ug.game.name}`}
+                {action.kind === "add" ? `Add ${action.game.name}` : action.kind === "load" ? `Add Credits to ${action.ug.game.name}` : `Withdraw from ${action.ug.game.name}`}
               </h2>
               <button type="button" onClick={closeAction} className="text-muted" aria-label="Close">
                 ✕
@@ -599,7 +603,7 @@ export default function GamesPage() {
               {busy
                 ? "Please wait…"
                 : action.kind === "redeem"
-                  ? "Request Redeem"
+                  ? "Request Withdrawal"
                   : needsDeposit
                     ? `Deposit ${money(parsedAmount)} & Load`
                     : action.kind === "add"
@@ -634,8 +638,10 @@ export default function GamesPage() {
 
       {depositFor && (
         <CheckoutModal
-          amount={depositFor.amount}
           methods={payMethods}
+          amounts={payOptions?.deposit.amounts}
+          min={payOptions?.minDeposit}
+          max={payOptions?.maxDeposit}
           payerName={user?.username}
           busy={busy}
           error={checkoutError}

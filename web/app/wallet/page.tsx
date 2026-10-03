@@ -31,7 +31,9 @@ const DEBIT_TYPES = new Set(["CASHOUT", "GAME_RECHARGE"]);
 const TX_LABELS: Record<string, string> = { GAME_RECHARGE: "Loaded to game", GAME_REDEEM: "Redeemed from game" };
 
 interface PaymentOptions {
-  deposit: { gateway: boolean; methods: string[] };
+  deposit: { gateway: boolean; methods: string[]; amounts?: Record<string, number[] | null> };
+  minDeposit?: number;
+  maxDeposit?: number;
   cashout: { gateway: boolean; methods: string[] };
 }
 
@@ -87,9 +89,9 @@ function WalletContent() {
   const [message, setMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
   const [busy, setBusy] = useState<"deposit" | "cashout" | null>(null);
   const { user } = useAuth();
-  const [checkoutAmount, setCheckoutAmount] = useState<number | null>(null);
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
-  const closeCheckout = useCallback(() => setCheckoutAmount(null), []);
+  const closeCheckout = useCallback(() => setCheckoutOpen(false), []);
   const [savedMethods, setSavedMethods] = useState<SavedPayoutMethod[]>([]);
   const [selectedMethodId, setSelectedMethodId] = useState("");
   const [addingMethod, setAddingMethod] = useState(false);
@@ -192,7 +194,7 @@ function WalletContent() {
     if (options?.deposit.gateway) {
       setCheckoutError(null);
       await refreshPaymentOptions();
-      setCheckoutAmount(Number(depositAmount));
+      setCheckoutOpen(true);
       return;
     }
     setBusy("deposit");
@@ -222,14 +224,13 @@ function WalletContent() {
     }
   }
 
-  async function payWithGateway(method: string) {
-    if (checkoutAmount === null) return;
+  async function payWithGateway(method: string, amount: number) {
     setCheckoutError(null);
     setBusy("deposit");
     try {
       const res = await api<{ cashierUrl?: string }>("/api/wallet/deposit", {
         method: "POST",
-        body: JSON.stringify({ amount: checkoutAmount, wayCode: method, deviceId: getDeviceId() }),
+        body: JSON.stringify({ amount, wayCode: method, deviceId: getDeviceId() }),
       });
       if (res.cashierUrl) {
         window.location.href = res.cashierUrl;
@@ -297,23 +298,27 @@ function WalletContent() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <form onSubmit={handleDeposit} className="card space-y-3">
             <h2 className="font-bold">Deposit</h2>
-            <input
-              className="input"
-              type="number"
-              min="1"
-              step="0.01"
-              placeholder="Amount ($)"
-              value={depositAmount}
-              onChange={(e) => setDepositAmount(e.target.value)}
-              required
-            />
+            {/* Gateway deposits pick method + amount in the secure checkout; manual mode still
+                takes a typed amount here. */}
+            {!options?.deposit.gateway && (
+              <input
+                className="input"
+                type="number"
+                min="1"
+                step="0.01"
+                placeholder="Amount ($)"
+                value={depositAmount}
+                onChange={(e) => setDepositAmount(e.target.value)}
+                required
+              />
+            )}
             <button type="submit" className="btn-primary w-full" disabled={busy === "deposit"}>
               {busy === "deposit" ? "Processing…" : "Deposit"}
             </button>
             <p className="text-xs text-muted">
               First deposit: 100% bonus · Tuesdays: 50% bonus · Otherwise: 20% bonus.{" "}
               {options?.deposit.gateway
-                ? "You'll be taken to a secure payment page; funds land in your balance once payment is confirmed."
+                ? "You'll pick your method and amount on a secure payment page; funds land in your balance once payment is confirmed."
                 : "Requests need admin approval before funds land in your balance."}
             </p>
           </form>
@@ -541,10 +546,12 @@ function WalletContent() {
         </div>
       </div>
 
-      {checkoutAmount !== null && options && (
+      {checkoutOpen && options && (
         <CheckoutModal
-          amount={checkoutAmount}
           methods={options.deposit.methods}
+          amounts={options.deposit.amounts}
+          min={options.minDeposit}
+          max={options.maxDeposit}
           payerName={user?.username}
           busy={busy === "deposit"}
           error={checkoutError}

@@ -10,6 +10,7 @@ import { PROVIDER, syncDeposit } from "../lib/paymentSync";
 import { rejectDeposit } from "../utils/deposit";
 import { sealSecret } from "../lib/secretBox";
 import { availablePayMethods, markPayMethodDown } from "../lib/payMethodHealth";
+import { amountsFor, isAllowedDepositAmount } from "../lib/depositAmounts";
 
 export const walletRouter = Router();
 walletRouter.use(requireAuth);
@@ -30,9 +31,14 @@ walletRouter.get("/transactions", async (req: AuthedRequest, res) => {
 });
 
 walletRouter.get("/payment-options", async (_req, res) => {
+  const methods = gateway.payEnabled ? await availablePayMethods() : [];
+  const settings = await getPlatformSettings();
   res.json({
-    // Only methods the gateway hasn't recently reported as unavailable.
-    deposit: { gateway: gateway.payEnabled, methods: gateway.payEnabled ? await availablePayMethods() : [] },
+    minDeposit: Number(settings.minDeposit),
+    maxDeposit: Number(settings.maxDeposit),
+    // Only methods the gateway hasn't recently reported as unavailable. amounts[method] lists
+    // the fixed amounts allowed for that method (null = any amount within min/max).
+    deposit: { gateway: gateway.payEnabled, methods, amounts: Object.fromEntries(methods.map((m) => [m, amountsFor(m)])) },
     cashout: {
       gateway: gateway.transferEnabled,
       // Offered even while payouts are manual, so the admin knows where to send the money.
@@ -101,8 +107,12 @@ walletRouter.post("/deposit", async (req: AuthedRequest, res) => {
   const settings = await getPlatformSettings();
   if (amount < Number(settings.minDeposit) || amount > Number(settings.maxDeposit)) {
     return res.status(400).json({
-      error: `Deposit must be between $${Number(settings.minDeposit).toFixed(2)} and $${Number(settings.maxDeposit).toFixed(2)}.`,
+      error: `Deposit must be between ${Number(settings.minDeposit).toFixed(2)} and ${Number(settings.maxDeposit).toFixed(2)}.`,
     });
+  }
+  // Fixed-amount methods (Cash App, Chime, …) only accept amounts from their list.
+  if (wayCode && !isAllowedDepositAmount(wayCode, amount)) {
+    return res.status(400).json({ error: `${PAY_METHOD_LABELS[wayCode] || "This method"} doesn't accept a ${amount.toFixed(2)} deposit. Choose one of the listed amounts.` });
   }
 
   const wallet = await prisma.wallet.findUnique({ where: { userId: req.userId! } });
