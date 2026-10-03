@@ -73,8 +73,11 @@ interface SavedPayoutMethod {
 }
 
 const PAYOUT_PLACEHOLDER: Record<string, string> = {
-  ecashapp: "cashtag (jaise $abc123)",
-  chime: "chimeSign ($ se start)",
+  ecashapp: "Cashtag (e.g. $abc123)",
+  chime: "ChimeSign (starts with $)",
+  paypal: "PayPal email",
+  venmo: "Venmo username (e.g. @abc123)",
+  zelle: "Zelle email or phone",
 };
 
 function WalletContent() {
