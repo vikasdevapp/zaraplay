@@ -14,7 +14,7 @@ const ROLES: { value: LoginAs; label: string; field: string; placeholder: string
   { value: "MASTER_ADMIN", label: "Master Admin", field: "Master Admin ID", placeholder: "master admin username" },
 ];
 
-const DESK_ROLES = ["AGENT", "ADMIN", "MASTER_ADMIN"];
+const DESK_ROLES = ["AGENT", "SUPPORT", "ADMIN", "MASTER_ADMIN"];
 
 export default function AgentLoginPage() {
   const { user, loading, login } = useAuth();

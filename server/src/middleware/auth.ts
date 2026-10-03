@@ -4,6 +4,9 @@ import { getSession, verifyAccessToken } from "../lib/tokens";
 export interface AuthedRequest extends Request {
   userId?: string;
   role?: string;
+  // Game ids this actor may see/act on in the agent desk, or null for "all" (admins). Set by
+  // the agent router's scope middleware; undefined outside it.
+  scopeGameIds?: string[] | null;
 }
 
 export async function requireAuth(req: AuthedRequest, res: Response, next: NextFunction) {

@@ -6,17 +6,31 @@ import { requireAuth, requireRole, AuthedRequest } from "../../middleware/auth";
 import { logAudit } from "../../lib/audit";
 import { deskRouter } from "./desk";
 import { agentStaffRouter } from "./staff";
+import { makeCashoutsRouter } from "../admin/cashouts";
+import { scopedGameIds, gameIdWhere, nestedGameIdWhere, playerInScopeWhere } from "../../lib/gameScope";
 import { GameError, claimRequest, completeRequest, rejectRequest, releaseRequest, syncBalance, updateCredentials } from "../../lib/gameAccounts";
 
 export const agentRouter = Router();
 
-// AGENT is the day-to-day operations role; ADMIN/MASTER_ADMIN can also work this dashboard.
-// (Scoped SUPPORT-staff access is added with the per-game scoping in the next phase.)
-agentRouter.use(requireAuth, requireRole("AGENT", "ADMIN", "MASTER_ADMIN"));
+// AGENT and per-game SUPPORT staff work this dashboard, each limited to their own games; ADMIN /
+// MASTER_ADMIN see everything.
+agentRouter.use(requireAuth, requireRole("AGENT", "SUPPORT", "ADMIN", "MASTER_ADMIN"));
+
+// Compute the actor's game scope once per request (null = all games, for admins).
+agentRouter.use(async (req: AuthedRequest, _res, next) => {
+  try {
+    req.scopeGameIds = await scopedGameIds({ id: req.userId!, role: req.role! });
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
 
 agentRouter.use("/desk", deskRouter);
 // An agent running their own per-game support staff (AGENT only — enforced inside).
 agentRouter.use("/staff", agentStaffRouter);
+// Cashouts for the actor's games only (same logic as the admin panel, scoped by the middleware).
+agentRouter.use("/cashouts", makeCashoutsRouter());
 
 const actorOf = (req: AuthedRequest) => ({ id: req.userId!, role: req.role! });
 
@@ -25,16 +39,34 @@ function sendError(res: Response, err: unknown) {
   throw err;
 }
 
+// Non-admins (agents / support staff) may only act on requests and accounts whose game is in
+// their scope. Admins (scope === null) pass straight through.
+async function assertRequestInScope(req: AuthedRequest, requestId: string) {
+  const scope = req.scopeGameIds ?? null;
+  if (scope === null) return;
+  const found = await prisma.gameRequest.findFirst({ where: { id: requestId, userGame: { gameId: { in: scope } } }, select: { id: true } });
+  if (!found) throw new GameError(403, "This request isn't for one of your games.");
+}
+async function assertAccountInScope(req: AuthedRequest, userGameId: string) {
+  const scope = req.scopeGameIds ?? null;
+  if (scope === null) return;
+  const found = await prisma.userGame.findFirst({ where: { id: userGameId, gameId: { in: scope } }, select: { id: true } });
+  if (!found) throw new GameError(403, "This account isn't for one of your games.");
+}
+
 agentRouter.get("/stats", async (req: AuthedRequest, res) => {
   const startOfToday = new Date();
   startOfToday.setHours(0, 0, 0, 0);
+  const scope = req.scopeGameIds ?? null;
+  const ugScope = gameIdWhere(scope); // { gameId: { in } } on UserGame
+  const reqScope = nestedGameIdWhere("userGame", scope); // { userGame: { gameId: { in } } } on GameRequest
   const [gameAccountCount, gameBalanceSum, pendingByType, mine, doneToday, pendingCashouts] = await Promise.all([
-    prisma.userGame.count({ where: { status: "ACTIVE" } }),
-    prisma.userGame.aggregate({ where: { status: "ACTIVE" }, _sum: { balance: true } }),
-    prisma.gameRequest.groupBy({ by: ["type"], where: { status: "PENDING" }, _count: { _all: true } }),
-    prisma.gameRequest.count({ where: { status: "PENDING", claimedById: req.userId! } }),
-    prisma.gameRequest.count({ where: { handledById: req.userId!, completedAt: { gte: startOfToday } } }),
-    prisma.transaction.count({ where: { type: "CASHOUT", status: "PENDING" } }),
+    prisma.userGame.count({ where: { status: "ACTIVE", ...ugScope } }),
+    prisma.userGame.aggregate({ where: { status: "ACTIVE", ...ugScope }, _sum: { balance: true } }),
+    prisma.gameRequest.groupBy({ by: ["type"], where: { status: "PENDING", ...reqScope }, _count: { _all: true } }),
+    prisma.gameRequest.count({ where: { status: "PENDING", claimedById: req.userId!, ...reqScope } }),
+    prisma.gameRequest.count({ where: { handledById: req.userId!, completedAt: { gte: startOfToday }, ...reqScope } }),
+    prisma.transaction.count({ where: { type: "CASHOUT", status: "PENDING", ...playerInScopeWhere(scope) } }),
   ]);
   const pending = Object.fromEntries(pendingByType.map((r) => [r.type, r._count._all]));
   res.json({
@@ -78,6 +110,7 @@ agentRouter.get("/requests", async (req: AuthedRequest, res) => {
     status: status as Prisma.EnumGameRequestStatusFilter["equals"],
     ...(type ? { type: type as Prisma.EnumGameRequestTypeFilter["equals"] } : {}),
     ...(req.query.mine === "1" ? { claimedById: req.userId! } : {}),
+    ...nestedGameIdWhere("userGame", req.scopeGameIds ?? null),
     ...(search
       ? {
           OR: [
@@ -101,6 +134,7 @@ agentRouter.get("/requests", async (req: AuthedRequest, res) => {
 
 agentRouter.post("/requests/:id/claim", async (req: AuthedRequest, res) => {
   try {
+    await assertRequestInScope(req, req.params.id);
     await claimRequest(req.params.id, actorOf(req));
     res.json({ ok: true });
   } catch (err) {
@@ -110,6 +144,7 @@ agentRouter.post("/requests/:id/claim", async (req: AuthedRequest, res) => {
 
 agentRouter.post("/requests/:id/release", async (req: AuthedRequest, res) => {
   try {
+    await assertRequestInScope(req, req.params.id);
     await releaseRequest(req.params.id, actorOf(req));
     res.json({ ok: true });
   } catch (err) {
@@ -130,6 +165,7 @@ agentRouter.post("/requests/:id/complete", async (req: AuthedRequest, res) => {
   const parsed = completeSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid input." });
   try {
+    await assertRequestInScope(req, req.params.id);
     const input = { ...parsed.data };
     // Redeems on automated games are settled instantly for the player (see autoWithdrawFromGame);
     // anything that reaches this queue is either a manual game or a redeem that fell back because
@@ -156,6 +192,7 @@ agentRouter.post("/requests/:id/reject", async (req: AuthedRequest, res) => {
   const parsed = rejectSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Tell the player why this request was rejected." });
   try {
+    await assertRequestInScope(req, req.params.id);
     const request = await rejectRequest(req.params.id, actorOf(req), parsed.data.reason);
     await logAudit(req.userId!, `GAME_${request.type}_REJECTED`, {
       targetType: "GameRequest",
@@ -173,10 +210,10 @@ agentRouter.post("/requests/:id/reject", async (req: AuthedRequest, res) => {
 // ------------------------------------------------------------------------------------------
 
 // "Game Balances": total recorded balance per game across active accounts.
-agentRouter.get("/game-balances", async (_req, res) => {
+agentRouter.get("/game-balances", async (req: AuthedRequest, res) => {
   const rows = await prisma.userGame.groupBy({
     by: ["gameId"],
-    where: { status: "ACTIVE" },
+    where: { status: "ACTIVE", ...gameIdWhere(req.scopeGameIds ?? null) },
     _sum: { balance: true },
     _count: { _all: true },
   });
@@ -192,10 +229,11 @@ agentRouter.get("/game-balances", async (_req, res) => {
 });
 
 // "Game Records": every player's game account with its login, searchable.
-agentRouter.get("/game-records", async (req, res) => {
+agentRouter.get("/game-records", async (req: AuthedRequest, res) => {
   const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
   const where: Prisma.UserGameWhereInput = {
     status: { in: ["ACTIVE", "PENDING"] },
+    ...gameIdWhere(req.scopeGameIds ?? null),
     ...(search
       ? {
           OR: [
@@ -226,6 +264,7 @@ agentRouter.post("/game-accounts/:id/balance", async (req: AuthedRequest, res) =
   const parsed = balanceSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Enter a valid balance." });
   try {
+    await assertAccountInScope(req, req.params.id);
     const before = await prisma.userGame.findUnique({ where: { id: req.params.id }, select: { balance: true, userId: true } });
     await syncBalance(req.params.id, actorOf(req), parsed.data.balance);
     await logAudit(req.userId!, "GAME_BALANCE_SYNCED", {
@@ -245,6 +284,7 @@ agentRouter.put("/game-accounts/:id/credentials", async (req: AuthedRequest, res
   const parsed = credentialsSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Username and password are required." });
   try {
+    await assertAccountInScope(req, req.params.id);
     await updateCredentials(req.params.id, parsed.data.gameUsername, parsed.data.gamePassword);
     await logAudit(req.userId!, "GAME_CREDENTIALS_UPDATED", { targetType: "UserGame", targetId: req.params.id });
     res.json({ ok: true });
@@ -258,7 +298,7 @@ agentRouter.put("/game-accounts/:id/credentials", async (req: AuthedRequest, res
 // ------------------------------------------------------------------------------------------
 
 // "Recharge Ledger": wallet deposits/cashouts, or game loads/redeems.
-agentRouter.get("/ledger", async (req, res) => {
+agentRouter.get("/ledger", async (req: AuthedRequest, res) => {
   const map: Record<string, Prisma.TransactionWhereInput["type"]> = {
     DEPOSIT: "DEPOSIT",
     REDEEM: "CASHOUT",
@@ -267,7 +307,8 @@ agentRouter.get("/ledger", async (req, res) => {
   };
   const type = map[String(req.query.type)] ?? "DEPOSIT";
   const transactions = await prisma.transaction.findMany({
-    where: { type },
+    // Wallet rows aren't game-tagged; limit non-admins to players who have a game in their scope.
+    where: { type, ...playerInScopeWhere(req.scopeGameIds ?? null) },
     orderBy: { createdAt: "desc" },
     take: 100,
     include: { user: { select: { id: true, fullName: true, username: true } } },

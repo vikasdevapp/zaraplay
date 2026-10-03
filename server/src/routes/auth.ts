@@ -219,7 +219,8 @@ const loginSchema = z.object({
   totp: z.string().max(10).optional(),
 });
 
-const LOGIN_AS_ROLE = { STAFF: "AGENT", ADMIN: "ADMIN", MASTER_ADMIN: "MASTER_ADMIN" } as const;
+// "Staff" covers both agents and the per-game support staff they create.
+const LOGIN_AS_ROLES = { STAFF: ["AGENT", "SUPPORT"], ADMIN: ["ADMIN"], MASTER_ADMIN: ["MASTER_ADMIN"] } as const;
 const LOGIN_AS_LABEL = { STAFF: "Staff", ADMIN: "Admin (Group)", MASTER_ADMIN: "Master Admin" } as const;
 
 authRouter.post("/login", async (req, res) => {
@@ -237,7 +238,7 @@ authRouter.post("/login", async (req, res) => {
 
   // Agent Desk sign-in is role locked: the chosen role must be the account's role. Checked
   // after the password, so it reveals nothing about accounts the caller can't open.
-  if (loginAs && LOGIN_AS_ROLE[loginAs] !== user.role) {
+  if (loginAs && !(LOGIN_AS_ROLES[loginAs] as readonly string[]).includes(user.role)) {
     return res.status(403).json({ error: `This account can't sign in as ${LOGIN_AS_LABEL[loginAs]}. Choose its correct role.` });
   }
 

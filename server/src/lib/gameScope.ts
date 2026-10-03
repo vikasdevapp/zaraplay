@@ -31,7 +31,34 @@ export function gameIdWhere(ids: string[] | null) {
   return ids === null ? {} : { gameId: { in: ids } };
 }
 
+/** A Prisma `where` fragment limiting the Game table's own `id` to the actor's scope. */
+export function ownGameWhere(ids: string[] | null) {
+  return ids === null ? {} : { id: { in: ids } };
+}
+
+/**
+ * The effective `gameId` filter combining the actor's scope with a requested gameId, so a
+ * requested id can never widen the scope:
+ *  - admin (null scope): the requested id, or no filter.
+ *  - scoped, id in scope: just that id.
+ *  - scoped, id out of scope: an impossible filter (empty result).
+ *  - scoped, no id: all of the scope.
+ */
+export function effectiveGameWhere(ids: string[] | null, requested?: string) {
+  if (ids === null) return requested ? { gameId: requested } : {};
+  if (requested) return ids.includes(requested) ? { gameId: requested } : { gameId: { in: [] as string[] } };
+  return { gameId: { in: ids } };
+}
+
 /** A Prisma `where` fragment limiting a relation that has a `gameId` (e.g. userGame) to scope. */
 export function nestedGameIdWhere(relation: string, ids: string[] | null) {
   return ids === null ? {} : { [relation]: { gameId: { in: ids } } };
+}
+
+/**
+ * A Prisma `where` fragment that limits to players who have at least one game in scope. Used for
+ * wallet-level rows (cashouts/deposits) that aren't tied to a game but belong to such a player.
+ */
+export function playerInScopeWhere(ids: string[] | null) {
+  return ids === null ? {} : { user: { games: { some: { gameId: { in: ids } } } } };
 }

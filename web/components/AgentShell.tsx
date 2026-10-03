@@ -11,6 +11,8 @@ interface NavLink {
   icon: string;
   adminOnly?: boolean;
   agentOnly?: boolean;
+  // AGENT role only (not support staff, not admin) — e.g. running your own staff.
+  agentExclusive?: boolean;
   badge?: "requests";
 }
 interface NavGroup {
@@ -39,6 +41,7 @@ const NAV: NavItem[] = [
   { href: "/agent/game-accounts", label: "Game Accounts", icon: "👥" },
   { href: "/agent/game-balances", label: "Games Balance", icon: "📦" },
   { href: "/agent/game-records", label: "Game Records", icon: "📊" },
+  { href: "/agent/cashouts", label: "Cashouts", icon: "💸" },
   {
     label: "Recharge Ledger",
     icon: "💲",
@@ -49,13 +52,13 @@ const NAV: NavItem[] = [
   },
   { href: "/admin/agent-team", label: "Staff Management", icon: "🧑‍💼", adminOnly: true },
   { href: "/agent/staff-activity", label: "Staff Activity", icon: "📋", adminOnly: true },
-  { href: "/agent/staff", label: "My Staff", icon: "🧑‍💼", agentOnly: true },
+  { href: "/agent/staff", label: "My Staff", icon: "🧑‍💼", agentExclusive: true },
   { href: "/agent/activity", label: "My Activity", icon: "🕓", agentOnly: true },
   { href: "/agent/change-password", label: "Change Password", icon: "🔒" },
   { href: "/agent/two-factor", label: "Two-Factor (2FA)", icon: "🛡️" },
 ];
 
-const AGENT_DASHBOARD_ROLES = ["AGENT", "ADMIN", "MASTER_ADMIN"];
+const AGENT_DASHBOARD_ROLES = ["AGENT", "SUPPORT", "ADMIN", "MASTER_ADMIN"];
 
 export default function AgentShell({ children }: { children: ReactNode }) {
   const { user, loading, logout } = useAuth();
@@ -63,6 +66,7 @@ export default function AgentShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const isAdmin = user?.role === "ADMIN" || user?.role === "MASTER_ADMIN";
+  const isAgent = user?.role === "AGENT";
   const [pendingRequests, setPendingRequests] = useState(0);
   const [open, setOpen] = useState<Record<string, boolean>>({});
 
@@ -87,7 +91,12 @@ export default function AgentShell({ children }: { children: ReactNode }) {
     return <div className="min-h-screen flex items-center justify-center text-muted">Loading…</div>;
   }
 
-  const visible = (l: NavLink) => (!l.adminOnly || isAdmin) && (!l.agentOnly || !isAdmin);
+  const visible = (l: NavLink) => {
+    if (l.adminOnly) return isAdmin;
+    if (l.agentExclusive) return isAgent;
+    if (l.agentOnly) return !isAdmin;
+    return true;
+  };
   const linkClass = (href: string, sub = false) =>
     `block shrink-0 ${sub ? "px-3 md:pl-9 py-1.5" : "px-3 py-2"} rounded-lg text-sm font-medium whitespace-nowrap ${
       pathname === href ? "bg-primary text-white" : "text-muted hover:text-white hover:bg-surface2"
@@ -113,7 +122,7 @@ export default function AgentShell({ children }: { children: ReactNode }) {
             <span className="w-8 h-8 rounded-lg bg-primary/20 border border-primary flex items-center justify-center text-sm">🧑‍💼</span>
             <span className="font-display font-bold text-lg">Agent Desk</span>
           </div>
-          <p className="text-[10px] tracking-widest text-muted mt-1">ZARA PLAYS · {isAdmin ? "ADMIN" : "AGENT"}</p>
+          <p className="text-[10px] tracking-widest text-muted mt-1">ZARA PLAYS · {isAdmin ? "ADMIN" : isAgent ? "AGENT" : "SUPPORT"}</p>
         </div>
         <p className="hidden md:block px-4 text-[10px] tracking-widest text-muted mb-1">MENU</p>
         <nav className="flex md:flex-col overflow-x-auto md:overflow-visible px-2 pb-2 md:pb-4 gap-1">

@@ -6,6 +6,7 @@ import { AuthedRequest, requireRole } from "../../middleware/auth";
 import { logAudit } from "../../lib/audit";
 import { GameError } from "../../lib/gameAccounts";
 import { createManualAccount, createManualTransaction, lookupAccount, setBackendBalance, topUpBackend } from "../../lib/gameDesk";
+import { gameIdWhere, ownGameWhere, effectiveGameWhere } from "../../lib/gameScope";
 
 // Agent Desk: the manual game-distributor panel (mounted under /api/agent/desk, so it already
 // requires an AGENT / ADMIN / MASTER_ADMIN session).
@@ -13,6 +14,14 @@ export const deskRouter = Router();
 
 const adminOnly = requireRole("ADMIN", "MASTER_ADMIN");
 const actorOf = (req: AuthedRequest) => ({ id: req.userId!, role: req.role! });
+const scopeOf = (req: AuthedRequest) => req.scopeGameIds ?? null;
+
+// Non-admins (agents / support staff) may only act on games in their scope.
+function assertGameInScope(req: AuthedRequest, gameId: string) {
+  const scope = scopeOf(req);
+  if (scope === null) return;
+  if (!scope.includes(gameId)) throw new GameError(403, "This game isn't one of yours.");
+}
 
 function sendError(res: Response, err: unknown) {
   if (err instanceof GameError) return res.status(err.status).json({ error: err.message });
@@ -46,9 +55,9 @@ const money = (v: Prisma.Decimal | number | null | undefined) => Math.round(Numb
 // Lookups for forms and filters
 // ------------------------------------------------------------------------------------------
 
-deskRouter.get("/meta", async (_req, res) => {
+deskRouter.get("/meta", async (req: AuthedRequest, res) => {
   const [games, staff] = await Promise.all([
-    prisma.game.findMany({ orderBy: [{ sortOrder: "asc" }, { name: "asc" }], select: { id: true, name: true, isActive: true } }),
+    prisma.game.findMany({ where: ownGameWhere(scopeOf(req)), orderBy: [{ sortOrder: "asc" }, { name: "asc" }], select: { id: true, name: true, isActive: true } }),
     prisma.user.findMany({ where: { role: { in: [...STAFF_ROLES] } }, orderBy: { username: "asc" }, select: { id: true, username: true, role: true } }),
   ]);
   res.json({ games, staff });
@@ -77,25 +86,28 @@ deskRouter.get("/players", async (req, res) => {
 // Dashboard
 // ------------------------------------------------------------------------------------------
 
-deskRouter.get("/dashboard", async (_req, res) => {
+deskRouter.get("/dashboard", async (req: AuthedRequest, res) => {
   const now = new Date();
   const yearStart = new Date(now.getFullYear(), 0, 1);
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const scope = scopeOf(req);
+  // Limit the monthly-count raw query to the actor's games (empty fragment for admins).
+  const rawGameFilter = scope ? Prisma.sql`AND "gameId" = ANY(${scope})` : Prisma.empty;
 
   const [players, transactions, monthly, monthTotals, games] = await Promise.all([
-    prisma.userGame.count({ where: { status: "ACTIVE" } }),
-    prisma.gameTransaction.count(),
+    prisma.userGame.count({ where: { status: "ACTIVE", ...gameIdWhere(scope) } }),
+    prisma.gameTransaction.count({ where: gameIdWhere(scope) }),
     prisma.$queryRaw<{ m: number; n: bigint }[]>`
       SELECT EXTRACT(MONTH FROM "createdAt")::int AS m, COUNT(*) AS n
-      FROM "GameTransaction" WHERE "createdAt" >= ${yearStart}
+      FROM "GameTransaction" WHERE "createdAt" >= ${yearStart} ${rawGameFilter}
       GROUP BY 1`,
     prisma.gameTransaction.groupBy({
       by: ["type", "source"],
-      where: { createdAt: { gte: monthStart } },
+      where: { createdAt: { gte: monthStart }, ...gameIdWhere(scope) },
       _sum: { amount: true },
       _count: { _all: true },
     }),
-    prisma.game.findMany({ select: { id: true, name: true, backendBalance: true, backendLowAt: true } }),
+    prisma.game.findMany({ where: ownGameWhere(scope), select: { id: true, name: true, backendBalance: true, backendLowAt: true } }),
   ]);
 
   const byMonth = Array.from({ length: 12 }, (_, i) => Number(monthly.find((r) => r.m === i + 1)?.n ?? 0));
@@ -136,15 +148,15 @@ deskRouter.get("/dashboard", async (_req, res) => {
 // Transactions
 // ------------------------------------------------------------------------------------------
 
-deskRouter.get("/transactions", async (req, res) => {
+deskRouter.get("/transactions", async (req: AuthedRequest, res) => {
   const q = req.query as Record<string, unknown>;
   const type = TX_TYPES.find((t) => t === q.type);
   const source = SOURCES.find((s) => s === q.source);
   const search = str(q.search);
   const where: Prisma.GameTransactionWhereInput = {
+    ...effectiveGameWhere(scopeOf(req), str(q.gameId) || undefined),
     ...(type ? { type } : {}),
     ...(source ? { source } : {}),
-    ...(str(q.gameId) ? { gameId: str(q.gameId) } : {}),
     ...(str(q.staffId) ? { staffId: str(q.staffId) } : {}),
     ...(dateRange(q) ? { createdAt: dateRange(q) } : {}),
     ...(search
@@ -209,6 +221,7 @@ deskRouter.post("/transactions", async (req: AuthedRequest, res) => {
   const parsed = txSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid input." });
   try {
+    assertGameInScope(req, parsed.data.gameId);
     const rows = await createManualTransaction(parsed.data, actorOf(req));
     await logAudit(req.userId!, `DESK_${parsed.data.type}`, {
       targetType: "GameTransaction",
@@ -225,8 +238,9 @@ deskRouter.post("/transactions", async (req: AuthedRequest, res) => {
 // Game accounts
 // ------------------------------------------------------------------------------------------
 
-deskRouter.get("/accounts/lookup", async (req, res) => {
+deskRouter.get("/accounts/lookup", async (req: AuthedRequest, res) => {
   try {
+    assertGameInScope(req, str(req.query.gameId));
     const account = await lookupAccount(str(req.query.gameId), str(req.query.username));
     res.json({ account });
   } catch (err) {
@@ -246,6 +260,7 @@ deskRouter.post("/accounts", async (req: AuthedRequest, res) => {
   const parsed = accountSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Enter the game, username and password." });
   try {
+    assertGameInScope(req, parsed.data.gameId);
     const account = await createManualAccount(parsed.data, actorOf(req));
     await logAudit(req.userId!, "DESK_ACCOUNT_CREATED", { targetType: "UserGame", targetId: account.id, meta: { gameUsername: account.gameUsername } });
     res.status(201).json({ account });
@@ -254,12 +269,12 @@ deskRouter.post("/accounts", async (req: AuthedRequest, res) => {
   }
 });
 
-deskRouter.get("/accounts", async (req, res) => {
+deskRouter.get("/accounts", async (req: AuthedRequest, res) => {
   const q = req.query as Record<string, unknown>;
   const search = str(q.search);
   const where: Prisma.UserGameWhereInput = {
     status: "ACTIVE",
-    ...(str(q.gameId) ? { gameId: str(q.gameId) } : {}),
+    ...effectiveGameWhere(scopeOf(req), str(q.gameId) || undefined),
     ...(str(q.staffId) ? { createdById: str(q.staffId) } : {}),
     ...(dateRange(q) ? { createdAt: dateRange(q) } : {}),
     ...(search
@@ -297,12 +312,13 @@ deskRouter.get("/accounts", async (req, res) => {
 // ------------------------------------------------------------------------------------------
 
 // "Game Records": per-game credit totals for a period.
-deskRouter.get("/game-records", async (req, res) => {
+deskRouter.get("/game-records", async (req: AuthedRequest, res) => {
   const range = dateRange(req.query as Record<string, unknown>);
+  const scope = scopeOf(req);
   const [games, sums, accounts] = await Promise.all([
-    prisma.game.findMany({ orderBy: [{ sortOrder: "asc" }, { name: "asc" }], select: { id: true, name: true } }),
-    prisma.gameTransaction.groupBy({ by: ["gameId", "type"], where: range ? { createdAt: range } : {}, _sum: { amount: true }, _count: { _all: true } }),
-    prisma.userGame.groupBy({ by: ["gameId"], where: { status: "ACTIVE" }, _count: { _all: true } }),
+    prisma.game.findMany({ where: ownGameWhere(scope), orderBy: [{ sortOrder: "asc" }, { name: "asc" }], select: { id: true, name: true } }),
+    prisma.gameTransaction.groupBy({ by: ["gameId", "type"], where: { ...gameIdWhere(scope), ...(range ? { createdAt: range } : {}) }, _sum: { amount: true }, _count: { _all: true } }),
+    prisma.userGame.groupBy({ by: ["gameId"], where: { status: "ACTIVE", ...gameIdWhere(scope) }, _count: { _all: true } }),
   ]);
   const records = games.map((g) => {
     const get = (t: GameTxType) => sums.find((s) => s.gameId === g.id && s.type === t);
@@ -326,10 +342,11 @@ deskRouter.get("/game-records", async (req, res) => {
 });
 
 // "Games Balance": our backend credit per game, plus what players hold there.
-deskRouter.get("/games-balance", async (_req, res) => {
+deskRouter.get("/games-balance", async (req: AuthedRequest, res) => {
+  const scope = scopeOf(req);
   const [games, held] = await Promise.all([
-    prisma.game.findMany({ orderBy: [{ sortOrder: "asc" }, { name: "asc" }], select: { id: true, name: true, isActive: true, backendBalance: true, backendLowAt: true, backendUpdatedAt: true } }),
-    prisma.userGame.groupBy({ by: ["gameId"], where: { status: "ACTIVE" }, _sum: { balance: true }, _count: { _all: true } }),
+    prisma.game.findMany({ where: ownGameWhere(scope), orderBy: [{ sortOrder: "asc" }, { name: "asc" }], select: { id: true, name: true, isActive: true, backendBalance: true, backendLowAt: true, backendUpdatedAt: true } }),
+    prisma.userGame.groupBy({ by: ["gameId"], where: { status: "ACTIVE", ...gameIdWhere(scope) }, _sum: { balance: true }, _count: { _all: true } }),
   ]);
   res.json({
     games: games.map((g) => {
@@ -354,6 +371,7 @@ deskRouter.post("/games/:id/backend", async (req: AuthedRequest, res) => {
   // Only admins change the alert threshold; any agent can correct the balance itself.
   const lowAt = req.role === "ADMIN" || req.role === "MASTER_ADMIN" ? parsed.data.lowAt : undefined;
   try {
+    assertGameInScope(req, req.params.id);
     const before = await prisma.game.findUnique({ where: { id: req.params.id }, select: { backendBalance: true } });
     await setBackendBalance(req.params.id, parsed.data.balance, lowAt);
     await logAudit(req.userId!, "DESK_BACKEND_BALANCE_SET", {
@@ -373,6 +391,7 @@ deskRouter.post("/games/:id/topups", async (req: AuthedRequest, res) => {
   const parsed = topUpSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Enter a valid amount." });
   try {
+    assertGameInScope(req, req.params.id);
     const topUp = await topUpBackend(req.params.id, parsed.data.amount, parsed.data.note, actorOf(req));
     await logAudit(req.userId!, "DESK_BACKEND_TOPUP", { targetType: "Game", targetId: req.params.id, meta: { amount: parsed.data.amount } });
     res.status(201).json({ topUp });
@@ -382,10 +401,10 @@ deskRouter.post("/games/:id/topups", async (req: AuthedRequest, res) => {
 });
 
 // "Recharge Ledger": credits bought for game backends.
-deskRouter.get("/topups", async (req, res) => {
+deskRouter.get("/topups", async (req: AuthedRequest, res) => {
   const q = req.query as Record<string, unknown>;
   const where: Prisma.BackendTopUpWhereInput = {
-    ...(str(q.gameId) ? { gameId: str(q.gameId) } : {}),
+    ...effectiveGameWhere(scopeOf(req), str(q.gameId) || undefined),
     ...(str(q.staffId) ? { staffId: str(q.staffId) } : {}),
     ...(dateRange(q) ? { createdAt: dateRange(q) } : {}),
   };

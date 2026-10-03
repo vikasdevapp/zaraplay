@@ -7,27 +7,42 @@ import { createTransfer, FINAL_FAILURE_STATES, gateway, GatewayError, ORDER_STAT
 import { PROVIDER, syncCashout } from "../../lib/paymentSync";
 import { openSecret } from "../../lib/secretBox";
 import { completeCashout, refundCashout } from "../../utils/payout";
+import { playerInScopeWhere } from "../../lib/gameScope";
 
-export const adminCashoutsRouter = Router();
+// Who may act on a cashout: admins (no scope set) see all; a scoped actor (agent / support staff,
+// via the agent router) only cashouts from players who hold a game in their scope.
+const scopeOf = (req: AuthedRequest) => req.scopeGameIds ?? null;
+async function playerInScope(scope: string[] | null, userId: string) {
+  if (scope === null) return true;
+  const ug = await prisma.userGame.findFirst({ where: { userId, gameId: { in: scope } }, select: { id: true } });
+  return !!ug;
+}
 
-adminCashoutsRouter.get("/", async (req, res) => {
-  const status = typeof req.query.status === "string" ? req.query.status.toUpperCase() : "PENDING";
-  const validStatuses = ["PENDING", "COMPLETED", "REJECTED"];
-  const where = validStatuses.includes(status) ? { type: "CASHOUT" as const, status: status as "PENDING" | "COMPLETED" | "REJECTED" } : { type: "CASHOUT" as const };
+// Built as a factory so the same logic serves the admin panel (unscoped) and the agent desk
+// (scoped to the actor's games) without duplicating the money-handling code.
+export function makeCashoutsRouter() {
+  const router = Router();
 
-  const cashouts = await prisma.transaction.findMany({
-    where,
-    orderBy: { createdAt: status === "PENDING" ? "asc" : "desc" },
-    take: 100,
-    include: { user: { select: { id: true, fullName: true, username: true, email: true } } },
+  router.get("/", async (req: AuthedRequest, res) => {
+    const status = typeof req.query.status === "string" ? req.query.status.toUpperCase() : "PENDING";
+    const validStatuses = ["PENDING", "COMPLETED", "REJECTED"];
+    const base = validStatuses.includes(status) ? { type: "CASHOUT" as const, status: status as "PENDING" | "COMPLETED" | "REJECTED" } : { type: "CASHOUT" as const };
+    const where = { ...base, ...playerInScopeWhere(scopeOf(req)) };
+
+    const cashouts = await prisma.transaction.findMany({
+      where,
+      orderBy: { createdAt: status === "PENDING" ? "asc" : "desc" },
+      take: 100,
+      include: { user: { select: { id: true, fullName: true, username: true, email: true } } },
+    });
+    res.json({ cashouts });
   });
-  res.json({ cashouts });
-});
 
-adminCashoutsRouter.post("/:id/approve", async (req: AuthedRequest, res) => {
+  router.post("/:id/approve", async (req: AuthedRequest, res) => {
   // The only query that loads the sealed card number (omitted everywhere else).
   const transaction = await prisma.transaction.findUnique({ where: { id: req.params.id }, omit: { payoutSecret: false } });
   if (!transaction || transaction.type !== "CASHOUT") return res.status(404).json({ error: "Cashout request not found." });
+  if (!(await playerInScope(scopeOf(req), transaction.userId))) return res.status(404).json({ error: "Cashout request not found." });
   if (transaction.status !== "PENDING") return res.status(409).json({ error: `This request is already ${transaction.status.toLowerCase()}.` });
   if (transaction.gatewayProvider) return res.status(409).json({ error: "This payout was already sent to the payment gateway." });
 
@@ -117,10 +132,11 @@ adminCashoutsRouter.post("/:id/approve", async (req: AuthedRequest, res) => {
   }
 });
 
-// Re-reads a gateway payout's state (for when a callback was missed).
-adminCashoutsRouter.post("/:id/sync", async (req: AuthedRequest, res) => {
+  // Re-reads a gateway payout's state (for when a callback was missed).
+  router.post("/:id/sync", async (req: AuthedRequest, res) => {
   const transaction = await prisma.transaction.findUnique({ where: { id: req.params.id } });
   if (!transaction || transaction.type !== "CASHOUT") return res.status(404).json({ error: "Cashout request not found." });
+  if (!(await playerInScope(scopeOf(req), transaction.userId))) return res.status(404).json({ error: "Cashout request not found." });
   if (transaction.gatewayProvider !== PROVIDER) return res.status(400).json({ error: "This cashout was not sent to the gateway." });
   try {
     res.json({ transaction: await syncCashout(transaction) });
@@ -129,14 +145,15 @@ adminCashoutsRouter.post("/:id/sync", async (req: AuthedRequest, res) => {
   }
 });
 
-const rejectSchema = z.object({ reason: z.string().max(200).optional() });
+  const rejectSchema = z.object({ reason: z.string().max(200).optional() });
 
-adminCashoutsRouter.post("/:id/reject", async (req: AuthedRequest, res) => {
+  router.post("/:id/reject", async (req: AuthedRequest, res) => {
   const parsed = rejectSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid input." });
 
   const transaction = await prisma.transaction.findUnique({ where: { id: req.params.id } });
   if (!transaction || transaction.type !== "CASHOUT") return res.status(404).json({ error: "Cashout request not found." });
+  if (!(await playerInScope(scopeOf(req), transaction.userId))) return res.status(404).json({ error: "Cashout request not found." });
   if (transaction.status !== "PENDING") return res.status(409).json({ error: `This request is already ${transaction.status.toLowerCase()}.` });
   if (transaction.gatewayProvider) {
     return res.status(409).json({ error: "This payout is already with the payment gateway and can't be rejected here." });
@@ -151,4 +168,9 @@ adminCashoutsRouter.post("/:id/reject", async (req: AuthedRequest, res) => {
     meta: { userId: transaction.userId, amount: transaction.amount, reason: parsed.data.reason },
   });
   res.json({ transaction: updated });
-});
+  });
+
+  return router;
+}
+
+export const adminCashoutsRouter = makeCashoutsRouter();
