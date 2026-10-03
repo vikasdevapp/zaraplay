@@ -16,6 +16,8 @@ interface UserDetail {
   role: string;
   createdAt: string;
   signupIp: string;
+  blockedAt: string | null;
+  blockedReason: string | null;
   wallet: { balance: string; freePlay: string; totalDeposited: string; lastDepositAmount: string } | null;
   games: { id: string; gameUsername: string; balance: string; game: { name: string } }[];
   transactions: { id: string; type: string; amount: string; status: string; adminNote: string | null; createdAt: string }[];
@@ -30,6 +32,8 @@ export default function AdminUserDetailPage() {
   const [bucket, setBucket] = useState<"balance" | "freePlay">("balance");
   const [message, setMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [warnMsg, setWarnMsg] = useState("");
+  const [modBusy, setModBusy] = useState(false);
 
   const load = useCallback(async () => {
     const res = await api<{ user: UserDetail }>(`/api/admin/users/${params.id}`);
@@ -57,6 +61,39 @@ export default function AdminUserDetailPage() {
       setMessage({ type: "error", text: err instanceof ApiError ? err.message : "Adjustment failed." });
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function sendWarning() {
+    if (!warnMsg.trim()) return;
+    setMessage(null);
+    setModBusy(true);
+    try {
+      await api(`/api/admin/users/${params.id}/warn`, { method: "POST", body: JSON.stringify({ message: warnMsg }) });
+      setMessage({ type: "success", text: "Warning sent to the player." });
+      setWarnMsg("");
+    } catch (err) {
+      setMessage({ type: "error", text: err instanceof ApiError ? err.message : "Could not send warning." });
+    } finally {
+      setModBusy(false);
+    }
+  }
+
+  async function toggleBlock() {
+    if (!user) return;
+    const blocking = !user.blockedAt;
+    const reason = blocking ? window.prompt("Reason for blocking this account (shown to the player):") ?? undefined : undefined;
+    if (blocking && reason === undefined) return; // cancelled
+    setMessage(null);
+    setModBusy(true);
+    try {
+      await api(`/api/admin/users/${params.id}/${blocking ? "block" : "unblock"}`, { method: "POST", body: JSON.stringify(blocking ? { reason } : {}) });
+      setMessage({ type: "success", text: blocking ? "Account blocked." : "Account unblocked." });
+      await load();
+    } catch (err) {
+      setMessage({ type: "error", text: err instanceof ApiError ? err.message : "Could not update the account." });
+    } finally {
+      setModBusy(false);
     }
   }
 
@@ -113,6 +150,32 @@ export default function AdminUserDetailPage() {
           {busy ? "Applying…" : "Apply Adjustment"}
         </button>
       </form>
+
+      {user.role === "USER" && (
+        <div className="card mb-6 space-y-3">
+          <h2 className="font-bold">Moderation</h2>
+          {user.blockedAt && (
+            <p className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg p-2.5">
+              🚫 Blocked on {new Date(user.blockedAt).toLocaleString()}
+              {user.blockedReason ? ` · ${user.blockedReason}` : ""}
+            </p>
+          )}
+          <div className="flex flex-col sm:flex-row gap-2">
+            <input className="input flex-1" placeholder="Warning message (shown in the player's notifications)" value={warnMsg} onChange={(e) => setWarnMsg(e.target.value)} />
+            <button type="button" onClick={sendWarning} disabled={modBusy || !warnMsg.trim()} className="btn-ghost sm:w-40 disabled:opacity-40">
+              ⚠️ Send Warning
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={toggleBlock}
+            disabled={modBusy}
+            className={`w-full sm:w-auto px-4 py-2 rounded-xl text-sm font-semibold ${user.blockedAt ? "bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30" : "bg-red-500/20 text-red-300 hover:bg-red-500/30"}`}
+          >
+            {user.blockedAt ? "Unblock account" : "Block account"}
+          </button>
+        </div>
+      )}
 
       <div className="card mb-6">
         <h2 className="font-bold mb-3">Games</h2>

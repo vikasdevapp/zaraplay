@@ -14,7 +14,7 @@ interface Notification {
   createdAt: string;
 }
 
-const KIND_ICON: Record<string, string> = { GAME: "🎮", WALLET: "💳", SUPPORT: "🎧", SYSTEM: "🔔" };
+const KIND_ICON: Record<string, string> = { GAME: "🎮", WALLET: "💳", SUPPORT: "🎧", WARNING: "⚠️", SYSTEM: "🔔" };
 
 function timeAgo(iso: string) {
   const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));

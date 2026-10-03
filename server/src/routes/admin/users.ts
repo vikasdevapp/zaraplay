@@ -3,8 +3,14 @@ import { z } from "zod";
 import { prisma } from "../../lib/prisma";
 import { AuthedRequest } from "../../middleware/auth";
 import { logAudit } from "../../lib/audit";
+import { ModerationError, setUserBlocked, warnUser } from "../../lib/moderation";
 
 export const adminUsersRouter = Router();
+
+function sendError(res: import("express").Response, err: unknown) {
+  if (err instanceof ModerationError) return res.status(err.status).json({ error: err.message });
+  throw err;
+}
 
 adminUsersRouter.get("/", async (req, res) => {
   const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
@@ -27,6 +33,7 @@ adminUsersRouter.get("/", async (req, res) => {
       email: true,
       role: true,
       phoneVerified: true,
+      blockedAt: true,
       createdAt: true,
       wallet: { select: { balance: true, freePlay: true, totalDeposited: true } },
     },
@@ -47,6 +54,8 @@ adminUsersRouter.get("/:id", async (req, res) => {
       role: true,
       createdAt: true,
       signupIp: true,
+      blockedAt: true,
+      blockedReason: true,
       wallet: true,
       games: { include: { game: true } },
       transactions: { orderBy: { createdAt: "desc" }, take: 50 },
@@ -54,6 +63,41 @@ adminUsersRouter.get("/:id", async (req, res) => {
   });
   if (!user) return res.status(404).json({ error: "User not found." });
   res.json({ user });
+});
+
+const warnSchema = z.object({ message: z.string().min(1).max(500) });
+
+adminUsersRouter.post("/:id/warn", async (req: AuthedRequest, res) => {
+  const parsed = warnSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Enter a warning message." });
+  try {
+    await warnUser(req.params.id, parsed.data.message, req.userId!);
+    res.json({ ok: true });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+const blockSchema = z.object({ reason: z.string().max(500).optional() });
+
+adminUsersRouter.post("/:id/block", async (req: AuthedRequest, res) => {
+  const parsed = blockSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: "Invalid input." });
+  try {
+    await setUserBlocked(req.params.id, true, parsed.data.reason, req.userId!);
+    res.json({ ok: true });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+adminUsersRouter.post("/:id/unblock", async (req: AuthedRequest, res) => {
+  try {
+    await setUserBlocked(req.params.id, false, undefined, req.userId!);
+    res.json({ ok: true });
+  } catch (err) {
+    sendError(res, err);
+  }
 });
 
 const adjustSchema = z.object({

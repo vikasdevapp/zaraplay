@@ -110,6 +110,9 @@ model User {
   totpEnabled   Boolean  @default(false)
   role          Role     @default(USER)
   avatarUrl     String?
+  // Moderation: when set the account is blocked (can't sign in); reason is shown to the player.
+  blockedAt     DateTime?
+  blockedReason String?
 
   referralCode  String   @unique
   referredById  String?

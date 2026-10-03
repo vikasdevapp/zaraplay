@@ -76,3 +76,11 @@ export function nestedGameIdWhere(relation: string, ids: string[] | null) {
 export function playerInScopeWhere(ids: string[] | null) {
   return ids === null ? {} : { user: { games: { some: { gameId: { in: ids } } } } };
 }
+
+/** Whether a player falls in an actor's scope (holds a game the actor manages; true for admins). */
+export async function isPlayerInScope(actor: ScopeActor, userId: string): Promise<boolean> {
+  const ids = await scopedGameIds(actor);
+  if (ids === null) return true;
+  const ug = await prisma.userGame.findFirst({ where: { userId, gameId: { in: ids } }, select: { id: true } });
+  return !!ug;
+}

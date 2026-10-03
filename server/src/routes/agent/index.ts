@@ -7,6 +7,7 @@ import { logAudit } from "../../lib/audit";
 import { deskRouter } from "./desk";
 import { agentStaffRouter } from "./staff";
 import { agentSupportRouter } from "./support";
+import { agentPlayersRouter } from "./players";
 import { makeCashoutsRouter } from "../admin/cashouts";
 import { scopedGameIds, gameIdWhere, nestedGameIdWhere, playerInScopeWhere } from "../../lib/gameScope";
 import { GameError, claimRequest, completeRequest, rejectRequest, releaseRequest, syncBalance, updateCredentials } from "../../lib/gameAccounts";
@@ -34,6 +35,8 @@ agentRouter.use("/staff", agentStaffRouter);
 agentRouter.use("/cashouts", makeCashoutsRouter());
 // Per-game support inbox (scoped to the chat personas of the actor's games).
 agentRouter.use("/support", agentSupportRouter);
+// Warn / block players in the actor's games.
+agentRouter.use("/players", agentPlayersRouter);
 
 const actorOf = (req: AuthedRequest) => ({ id: req.userId!, role: req.role! });
 

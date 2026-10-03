@@ -236,6 +236,10 @@ authRouter.post("/login", async (req, res) => {
   const ok = await bcrypt.compare(password, user.passwordHash);
   if (!ok) return res.status(401).json({ error: "Invalid credentials." });
 
+  if (user.blockedAt) {
+    return res.status(403).json({ error: `Your account has been blocked.${user.blockedReason ? ` ${user.blockedReason}` : ""} Contact support if you think this is a mistake.` });
+  }
+
   // Agent Desk sign-in is role locked: the chosen role must be the account's role. Checked
   // after the password, so it reveals nothing about accounts the caller can't open.
   if (loginAs && !(LOGIN_AS_ROLES[loginAs] as readonly string[]).includes(user.role)) {
@@ -280,6 +284,10 @@ authRouter.post("/refresh", async (req, res) => {
 
   const user = await prisma.user.findUnique({ where: { id: payload.sub } });
   if (!user) return res.status(401).json({ error: "Account no longer exists." });
+  if (user.blockedAt) {
+    await clearSession(user.id).catch(() => {});
+    return res.status(403).json({ error: "Your account has been blocked. Please log in again or contact support." });
+  }
 
   const { accessToken, refreshToken } = await issueSession(user.id, user.role);
   res.json({

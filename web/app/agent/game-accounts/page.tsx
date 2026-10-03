@@ -59,6 +59,37 @@ function Row({ a, onChanged }: { a: Account; onChanged: () => Promise<void> }) {
     }
   }
 
+  async function warn() {
+    if (!a.user) return;
+    const message = window.prompt(`Warning message for @${a.user.username} (shown in their notifications):`);
+    if (!message?.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api(`/api/agent/players/${a.user.id}/warn`, { method: "POST", body: JSON.stringify({ message }) });
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not send warning.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function block() {
+    if (!a.user) return;
+    const reason = window.prompt(`Reason for blocking @${a.user.username} (shown to them):`);
+    if (reason === null) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api(`/api/agent/players/${a.user.id}/block`, { method: "POST", body: JSON.stringify({ reason: reason || undefined }) });
+      await onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not block.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <tr className="align-top">
       <td className="px-4 py-3 whitespace-nowrap">{a.game.name}</td>
@@ -93,7 +124,8 @@ function Row({ a, onChanged }: { a: Account; onChanged: () => Promise<void> }) {
       </td>
       <td className="px-4 py-3 min-w-[220px]">
         {mode === "view" ? (
-          <div className="flex gap-2 justify-end">
+          <div className="flex flex-col items-end gap-1">
+          <div className="flex gap-2 justify-end flex-wrap">
             <button
               className="btn-ghost text-xs px-2 py-1"
               onClick={() => {
@@ -113,6 +145,18 @@ function Row({ a, onChanged }: { a: Account; onChanged: () => Promise<void> }) {
             >
               Edit login
             </button>
+            {a.user && (
+              <>
+                <button className="btn-ghost text-xs px-2 py-1 text-yellow-400" disabled={busy} onClick={warn} title="Warn player">
+                  ⚠️ Warn
+                </button>
+                <button className="btn-ghost text-xs px-2 py-1 text-red-400" disabled={busy} onClick={block} title="Block player">
+                  Block
+                </button>
+              </>
+            )}
+          </div>
+          {error && <p className="text-xs text-red-400">{error}</p>}
           </div>
         ) : (
           <div className="space-y-2">
