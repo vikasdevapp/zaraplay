@@ -114,14 +114,18 @@ walletRouter.post("/deposit", async (req: AuthedRequest, res) => {
   const amount = Math.round(parsed.data.amount * 100) / 100;
 
   const settings = await getPlatformSettings();
-  if (amount < Number(settings.minDeposit) || amount > Number(settings.maxDeposit)) {
+  // Fixed-amount methods (Cash App, Chime, …) have a curated list that is the authority — it can
+  // include amounts like $9.99 that sit just under the generic minimum, so validate against the
+  // list and skip the min/max range. Only free-entry deposits fall back to the range check.
+  const hasFixedList = !!(wayCode && amountsFor(wayCode));
+  if (hasFixedList) {
+    if (!isAllowedDepositAmount(wayCode!, amount)) {
+      return res.status(400).json({ error: `${PAY_METHOD_LABELS[wayCode!] || "This method"} doesn't accept a ${amount.toFixed(2)} deposit. Choose one of the listed amounts.` });
+    }
+  } else if (amount < Number(settings.minDeposit) || amount > Number(settings.maxDeposit)) {
     return res.status(400).json({
       error: `Deposit must be between ${Number(settings.minDeposit).toFixed(2)} and ${Number(settings.maxDeposit).toFixed(2)}.`,
     });
-  }
-  // Fixed-amount methods (Cash App, Chime, …) only accept amounts from their list.
-  if (wayCode && !isAllowedDepositAmount(wayCode, amount)) {
-    return res.status(400).json({ error: `${PAY_METHOD_LABELS[wayCode] || "This method"} doesn't accept a ${amount.toFixed(2)} deposit. Choose one of the listed amounts.` });
   }
 
   const wallet = await prisma.wallet.findUnique({ where: { userId: req.userId! } });

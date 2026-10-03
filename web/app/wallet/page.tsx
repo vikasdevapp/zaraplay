@@ -119,7 +119,8 @@ function WalletContent() {
     api<PaymentOptions>("/api/wallet/payment-options")
       .then((o) => {
         setOptions(o);
-        setPayoutMethod(o.cashout.methods[0] || "");
+        // Start on the "Select your withdraw method" placeholder, not the first method.
+        setPayoutMethod("");
       })
       .catch(() => {});
     api<{ methods: SavedPayoutMethod[] }>("/api/wallet/payout-methods")
@@ -133,6 +134,10 @@ function WalletContent() {
 
   async function saveMethod() {
     setMethodError(null);
+    if (!payoutMethod) {
+      setMethodError("Select your withdraw method first.");
+      return;
+    }
     setSavingMethod(true);
     try {
       let bodyData: Record<string, string> = {};
@@ -376,13 +381,16 @@ function WalletContent() {
                 {addingMethod ? (
                   <div className="rounded-xl border border-border p-3 space-y-2">
                     <select className="input" value={payoutMethod} onChange={(e) => setPayoutMethod(e.target.value)}>
+                      <option value="" disabled>
+                        Select your withdraw method
+                      </option>
                       {options.cashout.methods.map((m) => (
                         <option key={m} value={m}>
                           {PAYOUT_LABELS[m] || METHOD_LABELS[m] || m}
                         </option>
                       ))}
                     </select>
-                    {payoutMethod === "card" ? (
+                    {!payoutMethod ? null : payoutMethod === "card" ? (
                       <div className="grid grid-cols-3 gap-2">
                         <input
                           className="input col-span-2"

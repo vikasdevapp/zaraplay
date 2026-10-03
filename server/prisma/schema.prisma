@@ -382,7 +382,7 @@ model MarketplaceItem {
 // "IP Security".
 model PlatformSettings {
   id                        String   @id @default("default")
-  minDeposit                Decimal  @default(10) @db.Decimal(12, 2)
+  minDeposit                Decimal  @default(9.99) @db.Decimal(12, 2)
   maxDeposit                Decimal  @default(10000) @db.Decimal(12, 2)
   minWithdrawal             Decimal  @default(20) @db.Decimal(12, 2)
   maxWithdrawal             Decimal  @default(5000) @db.Decimal(12, 2)
