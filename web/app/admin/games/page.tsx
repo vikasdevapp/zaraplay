@@ -154,7 +154,7 @@ export default function AdminGamesPage() {
             <option value="JUWA">Juwa API (instant, automatic)</option>
           </select>
           <span className="block text-[11px] text-muted mt-1">
-            Juwa needs JUWA_BASE_URL / JUWA_AGENT_ID / JUWA_SECRET_KEY set on the server and this server&apos;s IP whitelisted. Failures fall back to the agent queue.
+            On automatic, player actions are handled instantly by the game API, with the agent queue as a safe fallback.
           </span>
         </label>
 
