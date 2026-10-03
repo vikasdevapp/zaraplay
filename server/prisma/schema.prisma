@@ -135,6 +135,25 @@ model User {
   rouletteSpins RouletteSpin[]
   pushSubscriptions PushSubscription[]
   payoutMethods PayoutMethod[]
+  notifications Notification[]
+}
+
+// An in-app alert in the bell menu. Created alongside the web-push notify (lib/webpush
+// notifyUser), so the bell and the push stay in step. `link` is an in-app path to open on tap.
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id])
+  title     String
+  body      String
+  // GAME | WALLET | SUPPORT | SYSTEM — picks the icon and grouping in the bell menu.
+  kind      String    @default("SYSTEM")
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  @@index([userId, readAt])
 }
 
 model Wallet {
@@ -208,6 +227,10 @@ model Game {
   // When set, player actions (create account, load, reset, balance) run through the platform
   // API instead of the agent queue; failures fall back to a manual agent request.
   automationProvider GameAutomationProvider?
+  // This game's own support contact: players open a chat with this agent from the game card,
+  // so each game can be supported by its own person (like each game has its own agent).
+  supportAgentId String?
+  supportAgent   SupportAgent? @relation(fields: [supportAgentId], references: [id])
   userGames UserGame[]
   transactions GameTransaction[]
   topUps       BackendTopUp[]
@@ -287,6 +310,8 @@ model SupportAgent {
   name         String
   isOnline     Boolean       @default(true)
   chatMessages ChatMessage[]
+  // Games this person is the dedicated support contact for.
+  games        Game[]
 }
 
 model ChatMessage {

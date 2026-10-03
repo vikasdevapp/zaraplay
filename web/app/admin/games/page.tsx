@@ -15,10 +15,18 @@ interface Game {
   isActive: boolean;
   sortOrder: number;
   automationProvider: string | null;
+  supportAgentId: string | null;
+  supportAgent?: { id: string; name: string; isOnline: boolean } | null;
   _count: { userGames: number };
 }
 
-const emptyForm = { name: "", imageUrl: "", playUrl: "", isActive: true, automationProvider: "" };
+interface SupportAgentOption {
+  id: string;
+  name: string;
+  isOnline: boolean;
+}
+
+const emptyForm = { name: "", imageUrl: "", playUrl: "", isActive: true, automationProvider: "", supportAgentId: "" };
 
 export default function AdminGamesPage() {
   const api = useApi();
@@ -26,6 +34,7 @@ export default function AdminGamesPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [games, setGames] = useState<Game[]>([]);
+  const [supportAgents, setSupportAgents] = useState<SupportAgentOption[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [uploading, setUploading] = useState(false);
@@ -33,8 +42,9 @@ export default function AdminGamesPage() {
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
-    const res = await api<{ games: Game[] }>("/api/admin/games");
+    const res = await api<{ games: Game[]; supportAgents: SupportAgentOption[] }>("/api/admin/games");
     setGames(res.games);
+    setSupportAgents(res.supportAgents || []);
   }, [api]);
 
   useEffect(() => {
@@ -59,7 +69,7 @@ export default function AdminGamesPage() {
 
   function startEdit(game: Game) {
     setEditingId(game.id);
-    setForm({ name: game.name, imageUrl: game.imageUrl || "", playUrl: game.playUrl || "", isActive: game.isActive, automationProvider: game.automationProvider || "" });
+    setForm({ name: game.name, imageUrl: game.imageUrl || "", playUrl: game.playUrl || "", isActive: game.isActive, automationProvider: game.automationProvider || "", supportAgentId: game.supportAgentId || "" });
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -79,6 +89,7 @@ export default function AdminGamesPage() {
         playUrl: form.playUrl || undefined,
         isActive: form.isActive,
         automationProvider: form.automationProvider ? form.automationProvider : null,
+        supportAgentId: form.supportAgentId ? form.supportAgentId : null,
       };
       if (editingId) {
         await api(`/api/admin/games/${editingId}`, { method: "PATCH", body: JSON.stringify(payload) });
@@ -144,6 +155,26 @@ export default function AdminGamesPage() {
           </select>
           <span className="block text-[11px] text-muted mt-1">
             Juwa needs JUWA_BASE_URL / JUWA_AGENT_ID / JUWA_SECRET_KEY set on the server and this server&apos;s IP whitelisted. Failures fall back to the agent queue.
+          </span>
+        </label>
+
+        <label className="text-xs text-muted block">
+          Support agent for this game
+          <select
+            className="input mt-1 sm:w-64"
+            value={form.supportAgentId}
+            onChange={(e) => setForm((f) => ({ ...f, supportAgentId: e.target.value }))}
+          >
+            <option value="">General support (no dedicated agent)</option>
+            {supportAgents.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+                {a.isOnline ? " · online" : ""}
+              </option>
+            ))}
+          </select>
+          <span className="block text-[11px] text-muted mt-1">
+            Players open a chat with this person from the game card. Manage the list under Admin → Support.
           </span>
         </label>
 

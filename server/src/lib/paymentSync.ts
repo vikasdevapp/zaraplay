@@ -3,7 +3,7 @@ import { prisma } from "./prisma";
 import { closePayOrder, FINAL_FAILURE_STATES, ORDER_STATE, queryPayOrder, queryTransfer, toCents } from "./ggusonepay";
 import { completeDeposit, rejectDeposit } from "../utils/deposit";
 import { completeCashout, refundCashout } from "../utils/payout";
-import { sendPushToUser } from "./webpush";
+import { notifyUser } from "./webpush";
 
 export const PROVIDER = "ggusonepay";
 
@@ -16,7 +16,7 @@ type TxRow = Omit<Transaction, "payoutSecret">;
 const money = (v: Prisma.Decimal | number | null) => `$${Number(v ?? 0).toFixed(2)}`;
 
 function notify(userId: string, title: string, body: string) {
-  sendPushToUser(userId, { title, body }).catch((err) => console.error("[ggusonepay] push failed", err));
+  notifyUser(userId, { title, body, kind: "WALLET", link: "/wallet" }).catch((err) => console.error("[ggusonepay] notify failed", err));
 }
 
 // A refund or dispute on money we already credited/paid can't be undone automatically (the

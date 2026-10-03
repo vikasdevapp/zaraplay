@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, FormEvent, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import CheckoutModal from "@/components/CheckoutModal";
+import RulesModal, { CashoutRules } from "@/components/RulesModal";
 import { getDeviceId } from "@/lib/device";
 import { useApi, useAuth } from "@/context/AuthContext";
 import { ApiError } from "@/lib/api";
@@ -35,6 +36,7 @@ interface PaymentOptions {
   minDeposit?: number;
   maxDeposit?: number;
   cashout: { gateway: boolean; methods: string[] };
+  cashoutRules?: CashoutRules;
 }
 
 const METHOD_LABELS: Record<string, string> = {
@@ -94,6 +96,7 @@ function WalletContent() {
   const [busy, setBusy] = useState<"deposit" | "cashout" | null>(null);
   const { user } = useAuth();
   const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [showRules, setShowRules] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const closeCheckout = useCallback(() => setCheckoutOpen(false), []);
   const [savedMethods, setSavedMethods] = useState<SavedPayoutMethod[]>([]);
@@ -329,19 +332,9 @@ function WalletContent() {
 
           <form onSubmit={handleCashout} className="card space-y-3">
             <h2 className="font-bold">Cashout</h2>
-            <input
-              className="input"
-              type="number"
-              min="1"
-              step="0.01"
-              placeholder="Amount ($)"
-              value={cashoutAmount}
-              onChange={(e) => setCashoutAmount(e.target.value)}
-              required
-            />
             {!!options?.cashout.methods.length && (
               <div className="space-y-2">
-                <p className="text-sm font-medium">Choose withdraw method</p>
+                <p className="text-sm font-medium">First, choose where to withdraw</p>
                 {savedMethods.map((m) => (
                   <label
                     key={m.id}
@@ -479,12 +472,28 @@ function WalletContent() {
                 )}
               </div>
             )}
+            <label className="block text-sm font-medium">
+              Amount to withdraw
+              <input
+                className="input mt-1"
+                type="number"
+                min="1"
+                step="0.01"
+                placeholder="Amount ($)"
+                value={cashoutAmount}
+                onChange={(e) => setCashoutAmount(e.target.value)}
+                required
+              />
+            </label>
             <button type="submit" className="btn-gold w-full" disabled={busy === "cashout"}>
               {busy === "cashout" ? "Processing…" : "Cashout"}
             </button>
             <p className="text-xs text-muted">
               $5-$35 deposit: 5x-10x cashout · &gt;$35 deposit: min 3x, no max. Amounts above your
-              tier max are forfeited beyond the limit. Requests need admin approval before payout.
+              tier max are forfeited beyond the limit. Requests need admin approval before payout.{" "}
+              <button type="button" onClick={() => setShowRules(true)} className="text-primary underline">
+                View all rules
+              </button>
             </p>
           </form>
         </div>
@@ -549,6 +558,17 @@ function WalletContent() {
           </div>
         </div>
       </div>
+
+      {showRules && options && (
+        <RulesModal
+          amounts={options.deposit.amounts}
+          labels={METHOD_LABELS}
+          minDeposit={options.minDeposit}
+          maxDeposit={options.maxDeposit}
+          cashoutRules={options.cashoutRules}
+          onClose={() => setShowRules(false)}
+        />
+      )}
 
       {checkoutOpen && options && (
         <CheckoutModal

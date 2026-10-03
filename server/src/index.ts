@@ -23,6 +23,7 @@ import { leaderboardRouter } from "./routes/leaderboard";
 import { emailRouter } from "./routes/email";
 import { twoFactorRouter } from "./routes/twoFactor";
 import { paymentsRouter } from "./routes/payments";
+import { notificationsRouter } from "./routes/notifications";
 import { startPaymentReconciler } from "./jobs/paymentReconciler";
 import { startCashoutTimeoutSweeper } from "./jobs/cashoutTimeoutSweeper";
 
@@ -85,6 +86,7 @@ app.use("/api/vip", vipRouter);
 app.use("/api/roulette", rouletteRouter);
 app.use("/api/phone", phoneRouter);
 app.use("/api/push", pushRouter);
+app.use("/api/notifications", notificationsRouter);
 app.use("/api/leaderboard", leaderboardRouter);
 app.use("/api/email", emailRouter);
 

@@ -39,6 +39,28 @@ export async function sendPushToUser(userId: string, payload: PushPayload) {
   await Promise.all(subs.map((sub) => sendToSubscription(sub, payload)));
 }
 
+interface NotifyOptions {
+  title?: string;
+  body: string;
+  // In-app path the bell entry opens (e.g. "/games", "/wallet").
+  link?: string;
+  // GAME | WALLET | SUPPORT | SYSTEM — icon/grouping in the bell menu.
+  kind?: string;
+}
+
+/**
+ * The one call to tell a player something happened: records an in-app notification (the bell
+ * menu) and fires the web-push at the same time, so both stay in step. Both are best-effort —
+ * a failure here never breaks the action that triggered it.
+ */
+export async function notifyUser(userId: string, opts: NotifyOptions) {
+  const title = opts.title || "Zara Plays";
+  await prisma.notification
+    .create({ data: { userId, title, body: opts.body, link: opts.link ?? null, kind: opts.kind || "SYSTEM" } })
+    .catch(() => {});
+  await sendPushToUser(userId, { title, body: opts.body }).catch(() => {});
+}
+
 export async function sendPushBroadcast(payload: PushPayload): Promise<number> {
   if (!ensureConfigured()) return 0;
   const subs = await prisma.pushSubscription.findMany();

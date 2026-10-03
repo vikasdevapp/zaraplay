@@ -19,7 +19,11 @@ export const gamesRouter = Router();
 // Public: shown on the marketing landing page before signup, same as everything below
 // requireAuth needs a logged-in session.
 gamesRouter.get("/catalog", async (_req, res) => {
-  const games = await prisma.game.findMany({ where: { isActive: true }, orderBy: { sortOrder: "asc" } });
+  const games = await prisma.game.findMany({
+    where: { isActive: true },
+    orderBy: { sortOrder: "asc" },
+    include: { supportAgent: { select: { id: true, name: true, isOnline: true } } },
+  });
   res.json({ games });
 });
 
@@ -43,7 +47,7 @@ gamesRouter.get("/mine", async (req: AuthedRequest, res) => {
         balance: true,
         balanceSyncedAt: true,
         createdAt: true,
-        game: true,
+        game: { include: { supportAgent: { select: { id: true, name: true, isOnline: true } } } },
         // Open requests drive the "waiting for agent" badges on each game card.
         requests: {
           where: { status: "PENDING" },

@@ -2,8 +2,10 @@
 
 import { useEffect, useState, useCallback, FormEvent } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import AppShell from "@/components/AppShell";
 import CheckoutModal from "@/components/CheckoutModal";
+import RulesModal, { CashoutRules } from "@/components/RulesModal";
 import { useApi, useAuth } from "@/context/AuthContext";
 import { ApiError } from "@/lib/api";
 import { getDeviceId } from "@/lib/device";
@@ -17,6 +19,8 @@ interface Game {
   playUrl: string | null;
   // When set, adding this game creates the login instantly (no agent wait).
   automationProvider: string | null;
+  // This game's dedicated support contact (null = use the general support page).
+  supportAgent?: { id: string; name: string; isOnline: boolean } | null;
 }
 
 type RequestType = "CREATE_ACCOUNT" | "RECHARGE" | "REDEEM" | "PASSWORD_RESET" | "BALANCE_CHECK";
@@ -57,7 +61,22 @@ interface PaymentOptions {
   deposit: { gateway: boolean; methods: string[]; amounts?: Record<string, number[] | null> };
   minDeposit?: number;
   maxDeposit?: number;
+  cashoutRules?: CashoutRules;
 }
+
+const METHOD_LABELS: Record<string, string> = {
+  cashapp: "Cash App",
+  ecashapp: "Cash App",
+  zelle: "Zelle",
+  btcpay: "Cash App Bitcoin",
+  paypal: "PayPal",
+  applepay: "Apple Pay",
+  googlepay: "Google Pay",
+  card: "Credit Card",
+  chime: "Chime",
+  venmo: "Venmo",
+  ach: "ACH Bank Transfer",
+};
 
 type MoneyAction = { kind: "add"; game: Game } | { kind: "load"; ug: UserGame } | { kind: "redeem"; ug: UserGame };
 
@@ -151,6 +170,7 @@ export default function GamesPage() {
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [showRules, setShowRules] = useState(false);
 
   // Deposit-and-load: which game account the deposit is for, and the checkout sheet state.
   const [depositFor, setDepositFor] = useState<{ userGameId: string; amount: number } | null>(null);
@@ -172,10 +192,12 @@ export default function GamesPage() {
 
   useEffect(() => {
     loadAll().catch(() => {});
+    // Payment options drive the deposit checkout and the deposit/cashout rules popup.
+    api<PaymentOptions>("/api/wallet/payment-options").then(setPayOptions).catch(() => {});
     // Agents work requests in the background; keep cards current while the page is open.
     const t = setInterval(() => loadAll().catch(() => {}), 30000);
     return () => clearInterval(t);
-  }, [loadAll]);
+  }, [loadAll, api]);
 
   function openAction(a: MoneyAction) {
     setAction(a);
@@ -506,6 +528,19 @@ export default function GamesPage() {
                     </button>
                   )}
                 </div>
+
+                <div className="flex items-center justify-between gap-3 mt-2 text-xs">
+                  <Link
+                    href={ug.game.supportAgent ? `/support?agent=${ug.game.supportAgent.id}` : "/support"}
+                    className="text-muted hover:text-white inline-flex items-center gap-1"
+                  >
+                    🎧 {ug.game.supportAgent ? `${ug.game.name} Support` : "Support"}
+                    {ug.game.supportAgent?.isOnline && <span className="w-1.5 h-1.5 rounded-full bg-green-400" />}
+                  </Link>
+                  <button type="button" onClick={() => setShowRules(true)} className="text-primary underline">
+                    Deposit &amp; cashout rules
+                  </button>
+                </div>
               </div>
             );
           })}
@@ -654,6 +689,17 @@ export default function GamesPage() {
           error={checkoutError}
           onPay={payWithGateway}
           onClose={() => !busy && setDepositFor(null)}
+        />
+      )}
+
+      {showRules && (
+        <RulesModal
+          amounts={payOptions?.deposit.amounts}
+          labels={METHOD_LABELS}
+          minDeposit={payOptions?.minDeposit}
+          maxDeposit={payOptions?.maxDeposit}
+          cashoutRules={payOptions?.cashoutRules}
+          onClose={() => setShowRules(false)}
         />
       )}
     </AppShell>

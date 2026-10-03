@@ -1,6 +1,6 @@
 import { GameRequest, GameTxSource, GameTxType, Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
-import { sendPushToUser } from "./webpush";
+import { notifyUser } from "./webpush";
 import { getPlatformSettings } from "./settings";
 import { gameCashoutLimits } from "./cashoutRules";
 
@@ -359,7 +359,7 @@ export async function completeRequest(requestId: string, actor: Actor, input: Co
     throw err;
   });
 
-  sendPushToUser(result.request.userId, { title: "Zara Plays", body: result.notify }).catch(() => {});
+  notifyUser(result.request.userId, { body: result.notify, kind: "GAME", link: "/games" }).catch(() => {});
   return result.request;
 }
 
@@ -509,7 +509,7 @@ export async function rejectRequest(requestId: string, actor: Actor, reason: str
     return r;
   });
   const refunded = request.transactionId && request.type !== "REDEEM" ? ` $${Number(request.amount).toFixed(2)} was returned to your wallet.` : "";
-  sendPushToUser(request.userId, { title: "Zara Plays", body: `Your game request was declined: ${note}.${refunded}` }).catch(() => {});
+  notifyUser(request.userId, { body: `Your game request was declined: ${note}.${refunded}`, kind: "GAME", link: "/games" }).catch(() => {});
   return request;
 }
 
@@ -527,7 +527,7 @@ export async function syncBalance(userGameId: string, actor: Actor, balance: num
   });
   if (answered.length) {
     const ug = await prisma.userGame.findUnique({ where: { id: userGameId }, select: { game: { select: { name: true } } } });
-    sendPushToUser(answered[0].userId, { title: "Zara Plays", body: `Your ${ug?.game.name ?? "game"} balance is $${value.toFixed(2)}.` }).catch(() => {});
+    notifyUser(answered[0].userId, { body: `Your ${ug?.game.name ?? "game"} balance is $${value.toFixed(2)}.`, kind: "GAME", link: "/games" }).catch(() => {});
   }
 }
 

@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useCallback, FormEvent } from "react";
+import { useEffect, useState, useCallback, FormEvent, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import { useApi } from "@/context/AuthContext";
 
@@ -17,19 +18,16 @@ interface Message {
   createdAt: string;
 }
 
-export default function SupportPage() {
+function SupportContent() {
   const api = useApi();
+  const searchParams = useSearchParams();
+  // Deep link from a game card: /support?agent=<id> opens that game's support chat directly.
+  const wantedAgentId = searchParams.get("agent");
   const [agents, setAgents] = useState<Agent[]>([]);
   const [activeAgent, setActiveAgent] = useState<Agent | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
-
-  useEffect(() => {
-    api<{ agents: Agent[] }>("/api/support/agents")
-      .then((res) => setAgents(res.agents))
-      .catch(() => {});
-  }, [api]);
 
   const openAgent = useCallback(
     async (agent: Agent) => {
@@ -39,6 +37,18 @@ export default function SupportPage() {
     },
     [api]
   );
+
+  useEffect(() => {
+    api<{ agents: Agent[] }>("/api/support/agents")
+      .then((res) => {
+        setAgents(res.agents);
+        const wanted = wantedAgentId && res.agents.find((a) => a.id === wantedAgentId);
+        if (wanted) openAgent(wanted).catch(() => {});
+      })
+      .catch(() => {});
+    // Only on first load / when the deep-linked agent changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, wantedAgentId]);
 
   async function handleSend(e: FormEvent) {
     e.preventDefault();
@@ -131,5 +141,13 @@ export default function SupportPage() {
         </div>
       </div>
     </AppShell>
+  );
+}
+
+export default function SupportPage() {
+  return (
+    <Suspense>
+      <SupportContent />
+    </Suspense>
   );
 }

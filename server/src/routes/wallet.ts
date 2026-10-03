@@ -44,6 +44,15 @@ walletRouter.get("/payment-options", async (_req, res) => {
       // Offered even while payouts are manual, so the admin knows where to send the money.
       methods: gateway.transferWayCodes,
     },
+    // The game-cashout (playthrough) tiers, so the rules popup stays in step with admin settings.
+    cashoutRules: {
+      tierBoundary: Number(settings.cashoutTierBoundary),
+      tier1Min: Number(settings.cashoutTier1MinMultiplier),
+      tier1Max: Number(settings.cashoutTier1MaxMultiplier),
+      tier2Min: Number(settings.cashoutTier2MinMultiplier),
+      minWithdrawal: Number(settings.minWithdrawal),
+      maxWithdrawal: Number(settings.maxWithdrawal),
+    },
   });
 });
 

@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, ReactNode } from "react";
 import { useAuth } from "@/context/AuthContext";
 import Logo from "@/components/Logo";
+import NotificationBell from "@/components/NotificationBell";
 
 const NAV_ITEMS = [
   { href: "/rewards", label: "Rewards", icon: "🎁" },
@@ -53,6 +54,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
             ))}
           </nav>
           <div className="flex items-center gap-3">
+            <NotificationBell />
             <Link href="/profile" className="w-9 h-9 rounded-full bg-primary/30 border border-primary flex items-center justify-center text-sm font-semibold">
               {user.fullName.slice(0, 1).toUpperCase()}
             </Link>

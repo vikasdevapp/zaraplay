@@ -1,7 +1,7 @@
 import { prisma } from "../lib/prisma";
 import { redis } from "../lib/redis";
 import { refundCashout } from "../utils/payout";
-import { sendPushToUser } from "../lib/webpush";
+import { notifyUser } from "../lib/webpush";
 
 const INTERVAL_MS = 60_000; // Check every 1 minute
 const TIMEOUT_MS = 60 * 60_000; // 1 hour timeout
@@ -35,9 +35,11 @@ export async function sweepExpiredCashouts() {
 
       if (updated) {
         // Send push notification to user
-        await sendPushToUser(cashout.userId, {
+        await notifyUser(cashout.userId, {
           title: "Withdrawal Status",
           body: "Withdraw failed please try again",
+          kind: "WALLET",
+          link: "/wallet",
         });
       }
     } catch (err) {

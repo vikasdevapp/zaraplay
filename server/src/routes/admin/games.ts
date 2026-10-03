@@ -23,11 +23,14 @@ adminGamesRouter.post("/upload-image", uploadGameImage.single("image"), (req: Au
 });
 
 adminGamesRouter.get("/", async (_req, res) => {
-  const games = await prisma.game.findMany({
-    orderBy: { sortOrder: "asc" },
-    include: { _count: { select: { userGames: true } } },
-  });
-  res.json({ games });
+  const [games, supportAgents] = await Promise.all([
+    prisma.game.findMany({
+      orderBy: { sortOrder: "asc" },
+      include: { _count: { select: { userGames: true } }, supportAgent: { select: { id: true, name: true, isOnline: true } } },
+    }),
+    prisma.supportAgent.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true, isOnline: true } }),
+  ]);
+  res.json({ games, supportAgents });
 });
 
 // Shown to players as a clickable link, so only http(s) — never javascript: or data: URLs.
@@ -44,6 +47,8 @@ const imageUrl = z
   .refine((u) => /^\/uploads\/[\w./-]+$/.test(u) || /^https?:\/\/\S+$/i.test(u), "Image must be an uploaded file or an http(s) URL");
 
 const automation = z.enum(["JUWA"]).nullable();
+// "" clears the assignment; otherwise the SupportAgent id this game is supported by.
+const supportAgent = z.string().max(40).nullable();
 
 const createSchema = z.object({
   name: z.string().min(1).max(60),
@@ -53,6 +58,7 @@ const createSchema = z.object({
   isActive: z.boolean().optional(),
   sortOrder: z.number().int().optional(),
   automationProvider: automation.optional(),
+  supportAgentId: supportAgent.optional(),
 });
 
 adminGamesRouter.post("/", async (req: AuthedRequest, res) => {
@@ -72,6 +78,7 @@ adminGamesRouter.post("/", async (req: AuthedRequest, res) => {
       isActive: parsed.data.isActive ?? true,
       sortOrder: parsed.data.sortOrder ?? 0,
       automationProvider: parsed.data.automationProvider ?? null,
+      supportAgentId: parsed.data.supportAgentId || null,
     },
   });
   await logAudit(req.userId!, "GAME_CREATED", { targetType: "Game", targetId: game.id, meta: { name: game.name } });
@@ -85,6 +92,7 @@ const updateSchema = z.object({
   isActive: z.boolean().optional(),
   sortOrder: z.number().int().optional(),
   automationProvider: automation.optional(),
+  supportAgentId: supportAgent.optional(),
 });
 
 adminGamesRouter.patch("/:id", async (req: AuthedRequest, res) => {
@@ -103,6 +111,7 @@ adminGamesRouter.patch("/:id", async (req: AuthedRequest, res) => {
       ...(parsed.data.isActive !== undefined ? { isActive: parsed.data.isActive } : {}),
       ...(parsed.data.sortOrder !== undefined ? { sortOrder: parsed.data.sortOrder } : {}),
       ...(parsed.data.automationProvider !== undefined ? { automationProvider: parsed.data.automationProvider } : {}),
+      ...(parsed.data.supportAgentId !== undefined ? { supportAgentId: parsed.data.supportAgentId || null } : {}),
     },
   });
   await logAudit(req.userId!, "GAME_UPDATED", { targetType: "Game", targetId: game.id, meta: parsed.data });

@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
-import { sendPushToUser } from "./webpush";
+import { notifyUser } from "./webpush";
 import { loadBasis, recordGameTx } from "./gameAccounts";
 import { getJuwaClient, JuwaClient, JuwaError } from "./juwa";
 import { getPlatformSettings } from "./settings";
@@ -158,7 +158,7 @@ export async function tryAutoRecharge(requestId: string): Promise<boolean> {
     await recordGameTx(tx, { type: "RECHARGE", source: "WEB", gameId: ug.gameId, userGameId: ug.id, gameUsername: ug.gameUsername!, amount, balanceAfter: Number(loaded.balance), staffId: null, gameRequestId: request.id });
     return `$${amount.toFixed(2)} has been loaded into ${ug.game.name}.`;
   });
-  if (notify) sendPushToUser(ug.userId!, { title: "Zara Plays", body: notify }).catch(() => {});
+  if (notify) notifyUser(ug.userId!, { body: notify, kind: "GAME", link: "/games" }).catch(() => {});
   return !!notify;
 }
 
@@ -181,7 +181,7 @@ export async function tryAutoResetPassword(requestId: string): Promise<boolean> 
     await tx.userGame.update({ where: { id: ug.id }, data: { gamePassword: password } });
     return true;
   });
-  if (done) sendPushToUser(ug.userId!, { title: "Zara Plays", body: `Your ${ug.game.name} password has been reset. Open My Games to see it.` }).catch(() => {});
+  if (done) notifyUser(ug.userId!, { body: `Your ${ug.game.name} password has been reset. Open My Games to see it.`, kind: "GAME", link: "/games" }).catch(() => {});
   return done;
 }
 
@@ -209,7 +209,7 @@ export async function tryAutoBalanceCheck(requestId: string): Promise<boolean> {
     });
     return true;
   });
-  if (done) sendPushToUser(ug.userId!, { title: "Zara Plays", body: `Your ${ug.game.name} balance is $${balance.toFixed(2)}.` }).catch(() => {});
+  if (done) notifyUser(ug.userId!, { body: `Your ${ug.game.name} balance is $${balance.toFixed(2)}.`, kind: "GAME", link: "/games" }).catch(() => {});
   return done;
 }
 
@@ -291,7 +291,7 @@ export async function autoWithdrawFromGame(userId: string, userGameId: string, r
     const body = s.forfeit > 0
       ? `$${s.payout.toFixed(2)} from ${ug.game.name} was added to your wallet. $${s.forfeit.toFixed(2)} above the cashout cap was forfeited.`
       : `$${s.payout.toFixed(2)} from ${ug.game.name} has been added to your wallet.`;
-    sendPushToUser(userId, { title: "Zara Plays", body }).catch(() => {});
+    notifyUser(userId, { body, kind: "WALLET", link: "/wallet" }).catch(() => {});
   }
   return { status: "done", payout: s.payout, forfeit: s.forfeit, leftover: s.leftover, min: s.min, max: s.max, balance: realBalance };
 }
