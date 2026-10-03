@@ -18,8 +18,6 @@ const NAV_ITEMS = [
   { href: "/admin/vip-tiers", label: "VIP Tiers", icon: "🏆" },
   { href: "/admin/marketplace", label: "Marketplace", icon: "🛍️" },
   { href: "/admin/roulette", label: "Roulette Wheel", icon: "🎡" },
-  { href: "/admin/support", label: "Support", icon: "🎧" },
-  { href: "/admin/support-team", label: "Support Team", icon: "🧑‍💼" },
   { href: "/admin/agent-team", label: "Agent Team", icon: "🧑‍🔧" },
   { href: "/agent", label: "Agent Desk", icon: "📥" },
   { href: "/admin/broadcast", label: "Broadcast", icon: "📣" },
@@ -37,27 +35,24 @@ const ACCOUNT_NAV_ITEMS = [
   { href: "/admin/two-factor", label: "Two-Factor (2FA)", icon: "🛡️" },
 ];
 
-// SUPPORT staff only ever see the support inbox (plus their own password); the API enforces the same rule.
-const SUPPORT_HOME = "/admin/support";
-const SUPPORT_NAV_ITEMS = [...NAV_ITEMS.filter((item) => item.href === SUPPORT_HOME), ...ACCOUNT_NAV_ITEMS];
-const SUPPORT_PATHS = SUPPORT_NAV_ITEMS.map((item) => item.href);
-
-const PANEL_ROLES = ["ADMIN", "MASTER_ADMIN", "SUPPORT"];
+// The admin panel is ADMIN / MASTER_ADMIN only. Per-game support staff (SUPPORT) and agents
+// work from the Agent Desk, so they're sent there instead.
+const PANEL_ROLES = ["ADMIN", "MASTER_ADMIN"];
+const DESK_ROLES = ["AGENT", "SUPPORT"];
 
 export default function AdminShell({ children }: { children: ReactNode }) {
   const { user, loading, logout } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
 
-  const isSupport = user?.role === "SUPPORT";
-  const allowed = !!user && PANEL_ROLES.includes(user.role) && (!isSupport || SUPPORT_PATHS.includes(pathname));
+  const allowed = !!user && PANEL_ROLES.includes(user.role);
 
   useEffect(() => {
     if (loading) return;
     if (!user) router.replace("/login");
+    else if (DESK_ROLES.includes(user.role)) router.replace("/agent");
     else if (!PANEL_ROLES.includes(user.role)) router.replace("/dashboard");
-    else if (isSupport && !SUPPORT_PATHS.includes(pathname)) router.replace(SUPPORT_HOME);
-  }, [loading, user, isSupport, pathname, router]);
+  }, [loading, user, router]);
 
   if (loading || !user || !allowed) {
     return (
@@ -67,9 +62,7 @@ export default function AdminShell({ children }: { children: ReactNode }) {
     );
   }
 
-  const navItems = isSupport
-    ? SUPPORT_NAV_ITEMS
-    : [...NAV_ITEMS, ...(user.role === "MASTER_ADMIN" ? MASTER_NAV_ITEMS : []), ...ACCOUNT_NAV_ITEMS];
+  const navItems = [...NAV_ITEMS, ...(user.role === "MASTER_ADMIN" ? MASTER_NAV_ITEMS : []), ...ACCOUNT_NAV_ITEMS];
 
   return (
     <div className="min-h-screen flex flex-col md:flex-row">
@@ -78,11 +71,11 @@ export default function AdminShell({ children }: { children: ReactNode }) {
         style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}
       >
         <div className="px-4 py-4">
-          <Link href={isSupport ? SUPPORT_HOME : "/admin"}>
+          <Link href="/admin">
             <Logo size="sm" />
           </Link>
           <p className="text-[10px] tracking-widest text-muted mt-1">
-            {user.role === "MASTER_ADMIN" ? "MASTER ADMIN" : isSupport ? "SUPPORT PANEL" : "ADMIN PANEL"}
+            {user.role === "MASTER_ADMIN" ? "MASTER ADMIN" : "ADMIN PANEL"}
           </p>
         </div>
         <nav className="flex md:flex-col overflow-x-auto md:overflow-visible px-2 pb-2 md:pb-4 gap-1">

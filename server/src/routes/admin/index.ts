@@ -3,7 +3,6 @@ import { requireAuth, requireRole } from "../../middleware/auth";
 import { adminGamesRouter } from "./games";
 import { adminUsersRouter } from "./users";
 import { adminCashoutsRouter } from "./cashouts";
-import { adminSupportRouter } from "./support";
 import { adminBroadcastRouter } from "./broadcast";
 import { adminStatsRouter } from "./stats";
 import { adminTransactionsRouter } from "./transactions";
@@ -17,23 +16,19 @@ import { adminVipTiersRouter } from "./vipTiers";
 import { adminMarketplaceRouter } from "./marketplace";
 import { adminRouletteRouter } from "./roulette";
 import { adminPaymentGatewayRouter } from "./paymentGateway";
-import { adminSupportTeamRouter } from "./supportTeam";
 import { adminAgentTeamRouter } from "./agentTeam";
 
 export const adminRouter = Router();
 
 adminRouter.use(requireAuth);
 
-// SUPPORT staff get the support inbox and nothing else; mounted ahead of the admin-only guard.
-adminRouter.use("/support", requireRole("SUPPORT", "ADMIN", "MASTER_ADMIN"), adminSupportRouter);
-
-// ADMIN and MASTER_ADMIN share full operational access to the site.
+// ADMIN and MASTER_ADMIN share full operational access to the site. (Support is handled per
+// game from the Agent Desk; SUPPORT staff and agents work there, not in the admin panel.)
 adminRouter.use(requireRole("ADMIN", "MASTER_ADMIN"));
 
 adminRouter.use("/games", adminGamesRouter);
 adminRouter.use("/users", adminUsersRouter);
 adminRouter.use("/cashouts", adminCashoutsRouter);
-adminRouter.use("/support-team", adminSupportTeamRouter);
 adminRouter.use("/agent-team", adminAgentTeamRouter);
 adminRouter.use("/broadcast", adminBroadcastRouter);
 adminRouter.use("/stats", adminStatsRouter);
