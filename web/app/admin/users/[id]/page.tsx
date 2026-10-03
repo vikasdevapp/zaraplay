@@ -13,7 +13,7 @@ interface UserDetail {
   email: string;
   phone: string | null;
   phoneVerified: boolean;
-  role: string;
+  role: "USER" | "AGENT" | "SUPPORT" | "ADMIN" | "MASTER_ADMIN";
   createdAt: string;
   signupIp: string;
   blockedAt: string | null;
@@ -107,10 +107,21 @@ export default function AdminUserDetailPage() {
 
   return (
     <AdminShell>
-      <h1 className="text-2xl font-bold mb-1">{user.fullName}</h1>
+      <h1 className="text-2xl font-bold mb-1 flex items-center gap-2">
+        {user.fullName}
+        <span className={`text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full ${user.role === "USER" ? "bg-slate-500/20 text-slate-300" : "bg-amber-500/20 text-amber-300"}`}>
+          {user.role === "USER" ? "Player" : user.role}
+        </span>
+        {user.blockedAt && <span className="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-red-500/20 text-red-300">Blocked</span>}
+      </h1>
       <p className="text-muted text-sm mb-6">
         @{user.username} · {user.email} · joined {new Date(user.createdAt).toLocaleDateString()} · signup IP {user.signupIp}
       </p>
+      {user.role !== "USER" && (
+        <p className="text-xs text-muted bg-surface2 border border-border rounded-lg p-2.5 mb-6">
+          This is a staff account ({user.role.toLowerCase()}), so warn/block tools don&apos;t apply. Manage staff under Agent Team (agents) or an agent&apos;s My Staff (support).
+        </p>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <div className="card">
