@@ -103,7 +103,7 @@ export default function CheckoutModal({ methods, amounts = {}, min = 1, max = 10
         </div>
 
         {/* Right content */}
-        <div className="flex-1 flex flex-col bg-white min-w-0">
+        <div className="flex-1 flex flex-col bg-white min-w-0 min-h-0">
           <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-200 shrink-0">
             <div>
               <h3 className="font-bold text-neutral-800 text-lg">{method ? `Choose amount` : "Select payment method"}</h3>
@@ -114,7 +114,7 @@ export default function CheckoutModal({ methods, amounts = {}, min = 1, max = 10
             </button>
           </div>
 
-          <div className="flex-1 p-6 overflow-y-auto">
+          <div className="flex-1 min-h-0 p-6 overflow-y-auto overscroll-contain">
             {!method ? (
               methods.length === 0 ? (
                 <p className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-4">No payment methods are available right now. Please try again shortly.</p>
