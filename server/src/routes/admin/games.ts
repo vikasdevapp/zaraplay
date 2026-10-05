@@ -4,6 +4,7 @@ import { prisma } from "../../lib/prisma";
 import { AuthedRequest } from "../../middleware/auth";
 import { logAudit } from "../../lib/audit";
 import { uploadGameImage } from "../../lib/upload";
+import { optimizeImageInPlace } from "../../lib/imageOptimize";
 
 export const adminGamesRouter = Router();
 
@@ -15,8 +16,10 @@ function slugify(name: string) {
     .replace(/(^-|-$)/g, "");
 }
 
-adminGamesRouter.post("/upload-image", uploadGameImage.single("image"), (req: AuthedRequest, res) => {
+adminGamesRouter.post("/upload-image", uploadGameImage.single("image"), async (req: AuthedRequest, res) => {
   if (!req.file) return res.status(400).json({ error: "No image uploaded." });
+  // Shrink the logo so it loads fast on the catalog (resized/compressed in place).
+  await optimizeImageInPlace(req.file.path, 512);
   // Site-relative so the link survives domain / http->https changes.
   const url = `/uploads/games/${req.file.filename}`;
   res.status(201).json({ url });

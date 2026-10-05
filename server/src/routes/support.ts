@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { uploadChatImage } from "../lib/upload";
+import { optimizeImageInPlace } from "../lib/imageOptimize";
 
 // Per-game support chat for players: a thread is (player, game), handled by that game's agent
 // and their staff. (The old per-persona SupportAgent flow is gone.)
@@ -10,8 +11,10 @@ export const supportRouter = Router();
 supportRouter.use(requireAuth);
 
 // Attach a proof photo to a chat message. Returns a site-relative URL to send with the message.
-supportRouter.post("/upload", uploadChatImage.single("image"), (req: AuthedRequest, res) => {
+supportRouter.post("/upload", uploadChatImage.single("image"), async (req: AuthedRequest, res) => {
   if (!req.file) return res.status(400).json({ error: "No image uploaded." });
+  // Shrink proof photos (phone cameras produce multi-MB files) while keeping them readable.
+  await optimizeImageInPlace(req.file.path, 1280);
   res.status(201).json({ url: `/uploads/chat/${req.file.filename}` });
 });
 

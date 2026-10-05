@@ -26,6 +26,7 @@ import { paymentsRouter } from "./routes/payments";
 import { notificationsRouter } from "./routes/notifications";
 import { startPaymentReconciler } from "./jobs/paymentReconciler";
 import { startCashoutTimeoutSweeper } from "./jobs/cashoutTimeoutSweeper";
+import { optimizeExistingUploads } from "./lib/imageOptimize";
 
 const app = express();
 
@@ -70,7 +71,8 @@ app.use(
 );
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
-app.use("/uploads", express.static(path.join(__dirname, "..", "uploads")));
+// Uploaded files use random, content-stable filenames, so they can be cached hard.
+app.use("/uploads", express.static(path.join(__dirname, "..", "uploads"), { maxAge: "30d", immutable: true }));
 
 app.use("/api/auth/2fa", twoFactorRouter);
 app.use("/api/auth", authRouter);
@@ -110,4 +112,6 @@ app.listen(port, () => {
   console.log(`Zara Plays API listening on :${port}`);
   startPaymentReconciler();
   startCashoutTimeoutSweeper();
+  // One-time, idempotent background pass to shrink any already-uploaded large images.
+  optimizeExistingUploads().catch(() => {});
 });
