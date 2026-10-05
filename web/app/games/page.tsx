@@ -208,7 +208,8 @@ export default function GamesPage() {
   }
 
   const parsedAmount = Number(amount);
-  const amountValid = amount.trim() !== "" && Number.isFinite(parsedAmount) && parsedAmount >= 1;
+  const MIN_GAME_AMOUNT = 5;
+  const amountValid = amount.trim() !== "" && Number.isFinite(parsedAmount) && parsedAmount >= MIN_GAME_AMOUNT;
   const needsDeposit = action && action.kind !== "redeem" && amountValid && parsedAmount > walletBalance;
 
   async function submitAction(e: FormEvent) {
@@ -220,7 +221,11 @@ export default function GamesPage() {
       return doAdd(action.game, undefined); // add without a first load
     }
     if (!amountValid) {
-      setActionError("Enter an amount of at least $1.00.");
+      setActionError(
+        action.kind === "redeem"
+          ? `Minimum withdrawal is $${MIN_GAME_AMOUNT.toFixed(2)}.`
+          : `Minimum to add is $${MIN_GAME_AMOUNT.toFixed(2)}.`
+      );
       return;
     }
 

@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, FormEvent, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import CheckoutModal from "@/components/CheckoutModal";
-import RulesModal, { CashoutRules } from "@/components/RulesModal";
+import type { CashoutRules } from "@/components/RulesModal";
 import { getDeviceId } from "@/lib/device";
 import { useApi, useAuth } from "@/context/AuthContext";
 import { ApiError } from "@/lib/api";
@@ -99,7 +99,6 @@ function WalletContent() {
   const [busy, setBusy] = useState<"deposit" | "cashout" | null>(null);
   const { user } = useAuth();
   const [checkoutOpen, setCheckoutOpen] = useState(false);
-  const [showRules, setShowRules] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const closeCheckout = useCallback(() => setCheckoutOpen(false), []);
   const [savedMethods, setSavedMethods] = useState<SavedPayoutMethod[]>([]);
@@ -506,9 +505,6 @@ function WalletContent() {
             <button type="submit" className="btn-gold w-full" disabled={busy === "cashout"}>
               {busy === "cashout" ? "Processing…" : "Cashout"}
             </button>
-            <button type="button" onClick={() => setShowRules(true)} className="text-xs text-primary underline self-start">
-              View deposit &amp; cashout rules
-            </button>
           </form>
         </div>
 
@@ -572,17 +568,6 @@ function WalletContent() {
           </div>
         </div>
       </div>
-
-      {showRules && options && (
-        <RulesModal
-          amounts={options.deposit.amounts}
-          labels={METHOD_LABELS}
-          minDeposit={options.minDeposit}
-          maxDeposit={options.maxDeposit}
-          cashoutRules={options.cashoutRules}
-          onClose={() => setShowRules(false)}
-        />
-      )}
 
       {checkoutOpen && options && (
         <CheckoutModal

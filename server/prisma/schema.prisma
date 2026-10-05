@@ -415,7 +415,7 @@ model PlatformSettings {
   id                        String   @id @default("default")
   minDeposit                Decimal  @default(9.99) @db.Decimal(12, 2)
   maxDeposit                Decimal  @default(10000) @db.Decimal(12, 2)
-  minWithdrawal             Decimal  @default(20) @db.Decimal(12, 2)
+  minWithdrawal             Decimal  @default(5) @db.Decimal(12, 2)
   maxWithdrawal             Decimal  @default(5000) @db.Decimal(12, 2)
   signupBonusPercent        Decimal  @default(100) @db.Decimal(6, 2)
   weekendBonusPercent       Decimal  @default(50) @db.Decimal(6, 2)

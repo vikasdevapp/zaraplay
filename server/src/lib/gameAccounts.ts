@@ -28,7 +28,7 @@ export class GameError extends Error {
   }
 }
 
-export const MIN_GAME_AMOUNT = 1;
+export const MIN_GAME_AMOUNT = 5;
 export const MAX_GAME_AMOUNT = 100000;
 const MAX_OPEN_RECHARGES_PER_GAME = 5;
 // A balance that was re-read this recently doesn't need another check yet.
