@@ -41,8 +41,8 @@ walletRouter.get("/payment-options", async (_req, res) => {
     deposit: { gateway: gateway.payEnabled, methods, amounts: Object.fromEntries(methods.map((m) => [m, amountsFor(m)])) },
     cashout: {
       gateway: gateway.transferEnabled,
-      // Offered even while payouts are manual, so the admin knows where to send the money.
-      methods: gateway.transferWayCodes,
+      // Gateway transfer methods plus manual ones (e.g. PayPal, paid by hand on approval).
+      methods: offeredCashoutMethods(),
     },
     // The game-cashout (playthrough) tiers, so the rules popup stays in step with admin settings.
     cashoutRules: {
@@ -284,6 +284,13 @@ function normalizeCardExpiry(input: string) {
 }
 
 
+// Payout methods that the gateway can't auto-transfer, so an admin/agent pays them by hand.
+const MANUAL_PAYOUT_METHODS = ["paypal"];
+// Every payout method offered at cashout: the gateway's own transfer methods plus the manual ones.
+function offeredCashoutMethods() {
+  return [...gateway.transferWayCodes, ...MANUAL_PAYOUT_METHODS];
+}
+
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // Mirrors the gateway's wayParam rules so bad details fail here, not at payout time.
 function payoutAccountError(wayCode: string, account: string): string | null {
@@ -292,6 +299,8 @@ function payoutAccountError(wayCode: string, account: string): string | null {
       return /^\$[A-Za-z0-9_-]{3,20}$/.test(account) ? null : "Enter a valid $Cashtag (e.g. $abc123).";
     case "chime":
       return /^\$[A-Za-z0-9_-]{3,50}$/.test(account) ? null : "Enter a valid $ChimeSign starting with $ (e.g. $yourname).";
+    case "paypal":
+      return EMAIL_RE.test(account) ? null : "Enter a valid PayPal email address.";
     default:
       return "Unsupported payout method.";
   }
@@ -311,14 +320,15 @@ walletRouter.get("/payout-methods", async (req: AuthedRequest, res) => {
     select: { id: true, wayCode: true, account: true, cardValid: true, createdAt: true },
   });
   // Methods the platform no longer offers stay listed (so users can delete them) but can't be used.
-  res.json({ methods: methods.map((m) => ({ ...m, usable: gateway.transferWayCodes.includes(m.wayCode) })) });
+  const offered = offeredCashoutMethods();
+  res.json({ methods: methods.map((m) => ({ ...m, usable: offered.includes(m.wayCode) })) });
 });
 
 walletRouter.post("/payout-methods", async (req: AuthedRequest, res) => {
   const parsed = payoutMethodSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid payout details." });
   const input = parsed.data;
-  if (!gateway.transferWayCodes.includes(input.wayCode)) return res.status(400).json({ error: "Unsupported payout method." });
+  if (!offeredCashoutMethods().includes(input.wayCode)) return res.status(400).json({ error: "Unsupported payout method." });
 
   const count = await prisma.payoutMethod.count({ where: { userId: req.userId! } });
   if (count >= MAX_PAYOUT_METHODS) {

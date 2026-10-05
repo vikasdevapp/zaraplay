@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../../lib/prisma";
 import { AuthedRequest } from "../../middleware/auth";
 import { logAudit } from "../../lib/audit";
-import { createTransfer, FINAL_FAILURE_STATES, gateway, GatewayError, ORDER_STATE, TRANSFER_ACCOUNT_FIELD } from "../../lib/ggusonepay";
+import { createTransfer, FINAL_FAILURE_STATES, gateway, GatewayError, ORDER_STATE, TRANSFER_ACCOUNT_FIELD, TRANSFER_METHODS } from "../../lib/ggusonepay";
 import { PROVIDER, syncCashout } from "../../lib/paymentSync";
 import { openSecret } from "../../lib/secretBox";
 import { completeCashout, refundCashout } from "../../utils/payout";
@@ -49,8 +49,9 @@ export function makeCashoutsRouter() {
   const payout = (transaction.meta as { payout?: { wayCode: string; account: string; cardValid?: string } } | null)?.payout;
   const auditMeta = { userId: transaction.userId, amount: transaction.amount, payout };
 
-  // No payout details (manual request, or gateway not configured): the admin paid it by hand.
-  if (!payout || !gateway.transferEnabled) {
+  // Paid by hand when there are no payout details, the gateway is off, or the chosen method
+  // isn't one the gateway can auto-transfer (e.g. PayPal).
+  if (!payout || !gateway.transferEnabled || !TRANSFER_METHODS.includes(payout.wayCode)) {
     const updated = await completeCashout(transaction.id, { paidManually: true });
     if (!updated) return res.status(409).json({ error: "This request was already processed." });
     await logAudit(req.userId!, "CASHOUT_APPROVED", { targetType: "Transaction", targetId: transaction.id, meta: auditMeta });

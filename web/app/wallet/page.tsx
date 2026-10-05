@@ -383,16 +383,23 @@ function WalletContent() {
 
                 {addingMethod ? (
                   <div className="rounded-xl border border-border p-3 space-y-2">
-                    <select className="input" value={payoutMethod} onChange={(e) => setPayoutMethod(e.target.value)}>
-                      <option value="" disabled>
-                        Select your withdraw method
-                      </option>
+                    <div className="flex flex-wrap gap-2">
                       {options.cashout.methods.map((m) => (
-                        <option key={m} value={m}>
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => setPayoutMethod(m)}
+                          className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-sm font-medium ${
+                            payoutMethod === m ? "border-primary bg-primary/10 text-white" : "border-border bg-surface2 text-muted hover:text-white"
+                          }`}
+                        >
+                          <span className={`w-4 h-4 rounded-md border flex items-center justify-center text-[10px] ${payoutMethod === m ? "border-primary bg-primary text-white" : "border-border"}`}>
+                            {payoutMethod === m ? "✓" : ""}
+                          </span>
                           {PAYOUT_LABELS[m] || METHOD_LABELS[m] || m}
-                        </option>
+                        </button>
                       ))}
-                    </select>
+                    </div>
                     {!payoutMethod ? null : payoutMethod === "card" ? (
                       <div className="grid grid-cols-3 gap-2">
                         <input
