@@ -120,7 +120,7 @@ export default function AdminPlatformRulesPage() {
           <h2 className="font-bold mb-3">IP Security</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="text-xs text-muted">Max Signups Per IP Per 24h (0 = unlimited)</label>
+              <label className="text-xs text-muted">Max Accounts Per Device/Network — lifetime (0 = unlimited)</label>
               <input
                 className="input mt-1"
                 type="number"

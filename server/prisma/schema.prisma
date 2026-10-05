@@ -429,7 +429,7 @@ model PlatformSettings {
   cashoutTier1MaxMultiplier Decimal  @default(10) @db.Decimal(6, 2)
   cashoutTier2MinMultiplier Decimal  @default(3) @db.Decimal(6, 2)
   ipSignupMaxPerDay         Int      @default(2)
-  ipBlockMessage            String   @default("Only {max} accounts can be created per device/network each day. Please try again tomorrow.")
+  ipBlockMessage            String   @default("Only {max} accounts can be created per device/network. Please contact support if you need help.")
   updatedAt                 DateTime @updatedAt
 }
 

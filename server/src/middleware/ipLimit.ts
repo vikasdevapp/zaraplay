@@ -1,8 +1,6 @@
 import { NextFunction, Request, Response } from "express";
-import { redis, signupIpKey } from "../lib/redis";
+import { prisma } from "../lib/prisma";
 import { getPlatformSettings } from "../lib/settings";
-
-const ONE_DAY_SECONDS = 24 * 60 * 60;
 
 export function getClientIp(req: Request): string {
   const forwarded = req.headers["x-forwarded-for"];
@@ -12,26 +10,30 @@ export function getClientIp(req: Request): string {
   return req.ip || req.socket.remoteAddress || "unknown";
 }
 
-/** Rejects signup once an IP has created the configured max accounts within 24h (see Platform Rules > IP Security). */
+/**
+ * Lifetime cap on accounts per device/network: rejects signup once an IP has already created the
+ * configured max accounts EVER (not per day). Counted straight from the users table (User.signupIp),
+ * so it survives Redis/server restarts. (The settings field is still named ipSignupMaxPerDay for
+ * backwards compatibility; it is now a lifetime limit.)
+ */
 export async function limitSignupsByIp(req: Request, res: Response, next: NextFunction) {
   const settings = await getPlatformSettings();
   const max = settings.ipSignupMaxPerDay;
-  const ip = getClientIp(req);
-  const key = signupIpKey(ip);
-
-  const current = Number((await redis.get(key)) || 0);
-  if (current >= max) {
-    return res.status(429).json({ error: settings.ipBlockMessage.replace("{max}", String(max)) });
+  // 0 (or less) = unlimited: no cap at all.
+  if (max > 0) {
+    const ip = getClientIp(req);
+    const count = await prisma.user.count({ where: { signupIp: ip } });
+    if (count >= max) {
+      return res.status(429).json({ error: settings.ipBlockMessage.replace("{max}", String(max)) });
+    }
   }
-
   next();
 }
 
-/** Call only after a signup has actually succeeded, so failed/duplicate attempts don't burn the quota. */
-export async function recordSuccessfulSignupIp(ip: string) {
-  const key = signupIpKey(ip);
-  const count = await redis.incr(key);
-  if (count === 1) {
-    await redis.expire(key, ONE_DAY_SECONDS);
-  }
+/**
+ * No-op kept for callers: the lifetime count is derived from User.signupIp at check time, so there
+ * is nothing to record separately once the account (with its signupIp) has been created.
+ */
+export async function recordSuccessfulSignupIp(_ip: string) {
+  // intentionally empty
 }
