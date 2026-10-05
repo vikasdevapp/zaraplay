@@ -19,13 +19,6 @@ export interface LoginExtra {
   totp?: string;
 }
 
-export interface SignupStartResult {
-  signupToken: string;
-  email: string;
-  expiresInSeconds: number;
-  devEmailPreviewUrl?: string;
-}
-
 interface AuthPayload {
   accessToken: string;
   refreshToken: string;
@@ -37,11 +30,8 @@ interface AuthContextValue {
   accessToken: string | null;
   loading: boolean;
   login: (emailOrUsername: string, password: string, extra?: LoginExtra) => Promise<void>;
-  /** Step 1 of signup: validates input and emails a one-time code. No account exists yet. */
-  startSignup: (data: { fullName: string; username: string; email: string; password: string; referralCode?: string }) => Promise<SignupStartResult>;
-  /** Step 2: confirms the code, creates the account, and logs in. */
-  verifySignupOtp: (signupToken: string, otp: string) => Promise<void>;
-  resendSignupOtp: (signupToken: string) => Promise<{ expiresInSeconds: number; devEmailPreviewUrl?: string }>;
+  /** Creates the account and signs the user in (no email verification). */
+  startSignup: (data: { fullName: string; username: string; email: string; password: string; referralCode?: string }) => Promise<void>;
   logout: () => Promise<void>;
   /** Exchanges the refresh token for a new pair. Concurrent callers share one in-flight call. */
   refresh: () => Promise<string | null>;
@@ -156,34 +146,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [persist, router]
   );
 
+  // No email verification: signup creates the account and signs the user in straight away.
   const startSignup = useCallback(
     async (data: { fullName: string; username: string; email: string; password: string; referralCode?: string }) => {
-      return apiFetch<SignupStartResult>("/api/auth/signup", {
+      const res = await apiFetch<AuthPayload>("/api/auth/signup", {
         method: "POST",
         body: JSON.stringify(data),
       });
-    },
-    []
-  );
-
-  const verifySignupOtp = useCallback(
-    async (signupToken: string, otp: string) => {
-      const data = await apiFetch<AuthPayload>("/api/auth/signup/verify", {
-        method: "POST",
-        body: JSON.stringify({ signupToken, otp }),
-      });
-      persist(data);
-      router.push(destinationFor(data.user.role));
+      persist(res);
+      router.push(destinationFor(res.user.role));
     },
     [persist, router]
   );
-
-  const resendSignupOtp = useCallback(async (signupToken: string) => {
-    return apiFetch<{ expiresInSeconds: number; devEmailPreviewUrl?: string }>("/api/auth/signup/resend", {
-      method: "POST",
-      body: JSON.stringify({ signupToken }),
-    });
-  }, []);
 
   const logout = useCallback(async () => {
     const token = tokensRef.current.accessToken;
@@ -243,8 +217,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loading,
         login,
         startSignup,
-        verifySignupOtp,
-        resendSignupOtp,
         logout,
         refresh,
         ready: readyGate.promise,

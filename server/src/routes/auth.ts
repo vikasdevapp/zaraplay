@@ -4,10 +4,10 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { customAlphabet } from "../lib/nanoid";
 import { prisma } from "../lib/prisma";
-import { redis, pendingSignupKey, signupIpKey } from "../lib/redis";
+import { redis } from "../lib/redis";
 import { limitSignupsByIp, recordSuccessfulSignupIp, getClientIp } from "../middleware/ipLimit";
 import { getPlatformSettings } from "../lib/settings";
-import { emailDomainAcceptsMail, sendOtpEmail } from "../lib/email";
+import { sendOtpEmail } from "../lib/email";
 import { sendOtpSms } from "../lib/sms";
 import { issueSession, getSession, clearSession, verifyRefreshToken } from "../lib/tokens";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
@@ -17,19 +17,7 @@ export const authRouter = Router();
 
 const referralCode = customAlphabet();
 
-const PENDING_SIGNUP_TTL_SECONDS = 10 * 60;
 const MAX_OTP_ATTEMPTS = 5;
-
-interface PendingSignup {
-  fullName: string;
-  username: string;
-  email: string;
-  passwordHash: string;
-  referredById?: string;
-  ip: string;
-  otp: string;
-  attempts: number;
-}
 
 const signupSchema = z.object({
   fullName: z.string().min(1).max(80),
@@ -47,9 +35,9 @@ function generateOtp() {
   return crypto.randomInt(100000, 1000000).toString();
 }
 
-// Step 1: validate + stash the signup in Redis (not the database — no account exists until
-// the OTP is confirmed) and email a 6-digit code. Nothing here consumes the IP signup quota
-// yet, since the account isn't real until step 2.
+// Email verification removed: signup creates the account directly and signs the user in.
+// (Password reset still uses OTP — see below.) The IP signup cap is enforced by the
+// limitSignupsByIp middleware and recorded once the account is actually created.
 authRouter.post("/signup", limitSignupsByIp, async (req, res) => {
   const parsed = signupSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -57,17 +45,9 @@ authRouter.post("/signup", limitSignupsByIp, async (req, res) => {
   }
   const { fullName, username, email, password, referralCode: incomingRefCode } = parsed.data;
 
-  const existing = await prisma.user.findFirst({
-    where: { OR: [{ email }, { username }] },
-  });
+  const existing = await prisma.user.findFirst({ where: { OR: [{ email }, { username }] } });
   if (existing) {
     return res.status(409).json({ error: "An account with that email or username already exists." });
-  }
-
-  // The account is only created once the emailed code is entered, so a fake address can never
-  // finish signup; this just stops obviously undeliverable ones before sending anything.
-  if (!(await emailDomainAcceptsMail(email))) {
-    return res.status(400).json({ error: "This email address can't receive mail. Please use a real email address." });
   }
 
   let referredById: string | undefined;
@@ -76,103 +56,37 @@ authRouter.post("/signup", limitSignupsByIp, async (req, res) => {
     if (referrer) referredById = referrer.id;
   }
 
-  const passwordHash = await bcrypt.hash(password, 10);
-  const ip = getClientIp(req);
-  const otp = generateOtp();
-
-  const signupToken = crypto.randomUUID();
-  const pending: PendingSignup = { fullName, username, email, passwordHash, referredById, ip, otp, attempts: 0 };
-  await redis.set(pendingSignupKey(signupToken), JSON.stringify(pending), "EX", PENDING_SIGNUP_TTL_SECONDS);
-
-  let previewUrl: string | false = false;
-  try {
-    const sent = await sendOtpEmail(email, otp);
-    previewUrl = sent.previewUrl;
-  } catch (err) {
-    console.error("Failed to send OTP email:", err);
-    return res.status(502).json({ error: "Could not send verification email. Please try again." });
-  }
-
-  res.status(200).json({
-    signupToken,
-    email,
-    expiresInSeconds: PENDING_SIGNUP_TTL_SECONDS,
-    // Dev-only aid: no real SMTP is configured, so this points at the test inbox where the
-    // actual email landed. Remove once a real provider (SendGrid/SES) is wired up.
-    devEmailPreviewUrl: previewUrl || undefined,
-  });
-});
-
-const verifySchema = z.object({
-  signupToken: z.string().min(1),
-  otp: z.string().length(6),
-});
-
-authRouter.post("/signup/verify", async (req, res) => {
-  const parsed = verifySchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "Invalid input." });
-  const { signupToken, otp } = parsed.data;
-
-  const key = pendingSignupKey(signupToken);
-  const raw = await redis.get(key);
-  if (!raw) return res.status(400).json({ error: "This verification code has expired. Please sign up again." });
-
-  const pending = JSON.parse(raw) as PendingSignup;
-
-  if (pending.attempts >= MAX_OTP_ATTEMPTS) {
-    await redis.del(key);
-    return res.status(429).json({ error: "Too many incorrect attempts. Please sign up again." });
-  }
-
-  if (pending.otp !== otp) {
-    pending.attempts += 1;
-    const ttl = await redis.ttl(key);
-    await redis.set(key, JSON.stringify(pending), "EX", ttl > 0 ? ttl : PENDING_SIGNUP_TTL_SECONDS);
-    return res.status(400).json({ error: `Incorrect code. ${MAX_OTP_ATTEMPTS - pending.attempts} attempt(s) left.` });
-  }
-
-  // Re-check uniqueness in case someone else took the email/username while this was pending.
-  const existing = await prisma.user.findFirst({ where: { OR: [{ email: pending.email }, { username: pending.username }] } });
-  if (existing) {
-    await redis.del(key);
-    return res.status(409).json({ error: "An account with that email or username already exists." });
-  }
-
   const settings = await getPlatformSettings();
+  const freeplayGrant = Number(settings.freeplaySignupGrant);
+  const ip = getClientIp(req);
+  const passwordHash = await bcrypt.hash(password, 10);
 
-  // Re-check the IP quota here too: starting a signup doesn't consume it (only a completed
-  // one does), so without this check someone could start several pending signups while under
-  // the cap and then verify all of them, creating more accounts than the daily limit allows.
-  const currentIpCount = Number((await redis.get(signupIpKey(pending.ip))) || 0);
-  if (currentIpCount >= settings.ipSignupMaxPerDay) {
-    await redis.del(key);
-    return res.status(429).json({ error: settings.ipBlockMessage.replace("{max}", String(settings.ipSignupMaxPerDay)) });
+  let user;
+  try {
+    user = await prisma.user.create({
+      data: {
+        fullName,
+        username,
+        email,
+        passwordHash,
+        signupIp: ip,
+        referralCode: referralCode(),
+        referredById,
+        phoneVerified: false,
+        wallet: { create: { freePlay: freeplayGrant } },
+        transactions: { create: { type: "FREEPLAY_GRANT", amount: freeplayGrant, status: "COMPLETED" } },
+      },
+      include: { wallet: true },
+    });
+  } catch (err) {
+    // Lost the race: someone just took this email/username.
+    if ((err as { code?: string }).code === "P2002") {
+      return res.status(409).json({ error: "An account with that email or username already exists." });
+    }
+    throw err;
   }
 
-  const freeplayGrant = Number(settings.freeplaySignupGrant);
-
-  const user = await prisma.user.create({
-    data: {
-      fullName: pending.fullName,
-      username: pending.username,
-      email: pending.email,
-      passwordHash: pending.passwordHash,
-      signupIp: pending.ip,
-      referralCode: referralCode(),
-      referredById: pending.referredById,
-      phoneVerified: false,
-      wallet: {
-        create: { freePlay: freeplayGrant },
-      },
-      transactions: {
-        create: { type: "FREEPLAY_GRANT", amount: freeplayGrant, status: "COMPLETED" },
-      },
-    },
-    include: { wallet: true },
-  });
-
-  await redis.del(key);
-  await recordSuccessfulSignupIp(pending.ip);
+  await recordSuccessfulSignupIp(ip);
   const { accessToken, refreshToken } = await issueSession(user.id, user.role);
 
   res.status(201).json({
@@ -181,33 +95,6 @@ authRouter.post("/signup/verify", async (req, res) => {
     user: { id: user.id, fullName: user.fullName, username: user.username, email: user.email, role: user.role },
     wallet: user.wallet,
   });
-});
-
-const resendSchema = z.object({ signupToken: z.string().min(1) });
-
-authRouter.post("/signup/resend", async (req, res) => {
-  const parsed = resendSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "Invalid input." });
-
-  const key = pendingSignupKey(parsed.data.signupToken);
-  const raw = await redis.get(key);
-  if (!raw) return res.status(400).json({ error: "This signup session has expired. Please sign up again." });
-
-  const pending = JSON.parse(raw) as PendingSignup;
-  pending.otp = generateOtp();
-  pending.attempts = 0;
-  await redis.set(key, JSON.stringify(pending), "EX", PENDING_SIGNUP_TTL_SECONDS);
-
-  let previewUrl: string | false = false;
-  try {
-    const sent = await sendOtpEmail(pending.email, pending.otp);
-    previewUrl = sent.previewUrl;
-  } catch (err) {
-    console.error("Failed to resend OTP email:", err);
-    return res.status(502).json({ error: "Could not send verification email. Please try again." });
-  }
-
-  res.json({ expiresInSeconds: PENDING_SIGNUP_TTL_SECONDS, devEmailPreviewUrl: previewUrl || undefined });
 });
 
 const loginSchema = z.object({
