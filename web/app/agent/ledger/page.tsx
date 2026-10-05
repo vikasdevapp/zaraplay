@@ -70,6 +70,7 @@ export default function AgentBackendLedgerPage() {
           }}
           games={games}
           staff={staff}
+          hideSearch
           count={total}
           countLabel="top-ups found"
           extra={<span className="font-semibold">Total: {money(totalAmount)}</span>}

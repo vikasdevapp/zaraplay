@@ -22,6 +22,7 @@ export function DeskFilters({
   staff,
   showSource,
   searchPlaceholder = "Username…",
+  hideSearch,
   count,
   countLabel,
   extra,
@@ -32,6 +33,8 @@ export function DeskFilters({
   staff: DeskStaff[];
   showSource?: boolean;
   searchPlaceholder?: string;
+  // Lists that have no searchable text (e.g. backend top-ups) hide the search box.
+  hideSearch?: boolean;
   count: number;
   countLabel: string;
   extra?: ReactNode;
@@ -41,10 +44,12 @@ export function DeskFilters({
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
-        <label className="text-xs text-muted">
-          Search
-          <input className="input mt-1" placeholder={searchPlaceholder} value={value.search} onChange={set("search")} />
-        </label>
+        {!hideSearch && (
+          <label className="text-xs text-muted">
+            Search
+            <input className="input mt-1" placeholder={searchPlaceholder} value={value.search} onChange={set("search")} />
+          </label>
+        )}
         <label className="text-xs text-muted">
           Game
           <select className="input mt-1" value={value.gameId} onChange={set("gameId")}>

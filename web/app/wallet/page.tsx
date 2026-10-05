@@ -506,13 +506,9 @@ function WalletContent() {
             <button type="submit" className="btn-gold w-full" disabled={busy === "cashout"}>
               {busy === "cashout" ? "Processing…" : "Cashout"}
             </button>
-            <p className="text-xs text-muted">
-              $5-$35 deposit: 5x-10x cashout · &gt;$35 deposit: min 3x, no max. Amounts above your
-              tier max are forfeited beyond the limit. Requests need admin approval before payout.{" "}
-              <button type="button" onClick={() => setShowRules(true)} className="text-primary underline">
-                View all rules
-              </button>
-            </p>
+            <button type="button" onClick={() => setShowRules(true)} className="text-xs text-primary underline self-start">
+              View deposit &amp; cashout rules
+            </button>
           </form>
         </div>
 
