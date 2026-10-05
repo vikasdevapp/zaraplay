@@ -285,7 +285,8 @@ function normalizeCardExpiry(input: string) {
 
 
 // Payout methods that the gateway can't auto-transfer, so an admin/agent pays them by hand.
-const MANUAL_PAYOUT_METHODS = ["paypal"];
+// (PayPal removed for now — it needs a separate PayPal Payouts integration to be useful.)
+const MANUAL_PAYOUT_METHODS: string[] = [];
 // Every payout method offered at cashout: the gateway's own transfer methods plus the manual ones.
 function offeredCashoutMethods() {
   return [...gateway.transferWayCodes, ...MANUAL_PAYOUT_METHODS];
