@@ -14,7 +14,7 @@ interface NavLink {
   agentOnly?: boolean;
   // AGENT role only (not support staff, not admin) — e.g. running your own staff.
   agentExclusive?: boolean;
-  badge?: "requests";
+  badge?: "requests" | "support";
 }
 interface NavGroup {
   label: string;
@@ -43,7 +43,7 @@ const NAV: NavItem[] = [
   { href: "/agent/game-balances", label: "Games Balance", icon: "📦" },
   { href: "/agent/game-records", label: "Game Records", icon: "📊" },
   { href: "/agent/cashouts", label: "Cashouts", icon: "💸" },
-  { href: "/agent/support", label: "Support", icon: "🎧" },
+  { href: "/agent/support", label: "Support", icon: "🎧", badge: "support" },
   {
     label: "Recharge Ledger",
     icon: "💲",
@@ -70,6 +70,7 @@ export default function AgentShell({ children }: { children: ReactNode }) {
   const isAdmin = user?.role === "ADMIN" || user?.role === "MASTER_ADMIN";
   const isAgent = user?.role === "AGENT";
   const [pendingRequests, setPendingRequests] = useState(0);
+  const [supportNew, setSupportNew] = useState(0);
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [confirmLogout, setConfirmLogout] = useState(false);
 
@@ -82,8 +83,11 @@ export default function AgentShell({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!user || !AGENT_DASHBOARD_ROLES.includes(user.role)) return;
     const load = () =>
-      api<{ pendingRequests: number }>("/api/agent/stats")
-        .then((s) => setPendingRequests(s.pendingRequests))
+      api<{ pendingRequests: number; supportNew: number }>("/api/agent/stats")
+        .then((s) => {
+          setPendingRequests(s.pendingRequests);
+          setSupportNew(s.supportNew ?? 0);
+        })
         .catch(() => {});
     load();
     const t = setInterval(load, 30000);
@@ -112,6 +116,9 @@ export default function AgentShell({ children }: { children: ReactNode }) {
         {l.label}
         {l.badge === "requests" && pendingRequests > 0 && (
           <span className="ml-2 text-[10px] bg-primary text-white rounded-full px-1.5 py-0.5">{pendingRequests}</span>
+        )}
+        {l.badge === "support" && supportNew > 0 && (
+          <span className="ml-2 text-[10px] bg-red-500 text-white rounded-full px-1.5 py-0.5">{supportNew}</span>
         )}
       </Link>
     );

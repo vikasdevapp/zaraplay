@@ -134,6 +134,8 @@ model User {
   transactions  Transaction[]
   chatMessages  ChatMessage[] @relation("UserChats")
   supportReplies ChatMessage[] @relation("SupportReplies")
+  supportTickets SupportTicket[] @relation("UserTickets")
+  resolvedTickets SupportTicket[] @relation("TicketResolver")
   auditLogs     AuditLog[]
   rouletteSpins RouletteSpin[]
   pushSubscriptions PushSubscription[]
@@ -256,6 +258,7 @@ model Game {
   transactions GameTransaction[]
   topUps       BackendTopUp[]
   chatMessages ChatMessage[]
+  supportTickets SupportTicket[]
 
   @@index([agentId])
 }
@@ -345,6 +348,9 @@ model ChatMessage {
   // Support is per game: a thread is (player, game), handled by the game's agent and their staff.
   gameId    String?
   game      Game?         @relation(fields: [gameId], references: [id])
+  // The ticket this message belongs to (a game thread can have several tickets over time).
+  ticketId  String?
+  ticket    SupportTicket? @relation(fields: [ticketId], references: [id])
   // Legacy persona link (pre per-game support); kept nullable for old rows.
   agentId   String?
   agent     SupportAgent? @relation(fields: [agentId], references: [id])
@@ -359,6 +365,37 @@ model ChatMessage {
 
   @@index([sentById, createdAt])
   @@index([gameId, userId, createdAt])
+  @@index([ticketId, createdAt])
+}
+
+// A support ticket: one conversation about a game. NEW = user is waiting for a reply,
+// PENDING = staff replied / in progress, SOLVED = resolved (cleared from the user's view).
+enum SupportTicketStatus {
+  NEW
+  PENDING
+  SOLVED
+}
+
+model SupportTicket {
+  id              String              @id @default(cuid())
+  userId          String
+  user            User                @relation("UserTickets", fields: [userId], references: [id])
+  gameId          String?
+  game            Game?               @relation(fields: [gameId], references: [id])
+  status          SupportTicketStatus @default(NEW)
+  // Unread user messages for staff: bumped when the user sends, reset to 0 when staff open it.
+  staffUnread     Int                 @default(0)
+  // When staff last opened this ticket.
+  staffLastReadAt DateTime?
+  resolvedAt      DateTime?
+  resolvedById    String?
+  resolvedBy      User?               @relation("TicketResolver", fields: [resolvedById], references: [id])
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  messages        ChatMessage[]
+
+  @@index([gameId, status, updatedAt])
+  @@index([userId, status])
 }
 
 model BroadcastMessage {

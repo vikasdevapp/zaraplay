@@ -66,13 +66,15 @@ agentRouter.get("/stats", async (req: AuthedRequest, res) => {
   const scope = req.scopeGameIds ?? null;
   const ugScope = gameIdWhere(scope); // { gameId: { in } } on UserGame
   const reqScope = nestedGameIdWhere("userGame", scope); // { userGame: { gameId: { in } } } on GameRequest
-  const [gameAccountCount, gameBalanceSum, pendingByType, mine, doneToday, pendingCashouts] = await Promise.all([
+  const [gameAccountCount, gameBalanceSum, pendingByType, mine, doneToday, pendingCashouts, supportNew] = await Promise.all([
     prisma.userGame.count({ where: { status: "ACTIVE", ...ugScope } }),
     prisma.userGame.aggregate({ where: { status: "ACTIVE", ...ugScope }, _sum: { balance: true } }),
     prisma.gameRequest.groupBy({ by: ["type"], where: { status: "PENDING", ...reqScope }, _count: { _all: true } }),
     prisma.gameRequest.count({ where: { status: "PENDING", claimedById: req.userId!, ...reqScope } }),
     prisma.gameRequest.count({ where: { handledById: req.userId!, completedAt: { gte: startOfToday }, ...reqScope } }),
     prisma.transaction.count({ where: { type: "CASHOUT", status: "PENDING", ...playerInScopeWhere(scope) } }),
+    // Support tickets awaiting a first reply, for the Support nav badge.
+    prisma.supportTicket.count({ where: { status: "NEW", ...gameIdWhere(scope) } }),
   ]);
   const pending = Object.fromEntries(pendingByType.map((r) => [r.type, r._count._all]));
   res.json({
@@ -83,6 +85,7 @@ agentRouter.get("/stats", async (req: AuthedRequest, res) => {
     myOpenRequests: mine,
     handledToday: doneToday,
     pendingCashouts,
+    supportNew,
   });
 });
 

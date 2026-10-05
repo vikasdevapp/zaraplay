@@ -28,6 +28,7 @@ function SupportContent() {
   const [games, setGames] = useState<Game[]>([]);
   const [activeGame, setActiveGame] = useState<Game | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [ticketStatus, setTicketStatus] = useState<"NEW" | "PENDING" | "SOLVED" | null>(null);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -35,8 +36,9 @@ function SupportContent() {
   const openGame = useCallback(
     async (game: Game) => {
       setActiveGame(game);
-      const res = await api<{ messages: Message[] }>(`/api/support/games/${game.id}/messages`);
+      const res = await api<{ messages: Message[]; ticketStatus: "NEW" | "PENDING" | "SOLVED" | null }>(`/api/support/games/${game.id}/messages`);
       setMessages(res.messages);
+      setTicketStatus(res.ticketStatus);
     },
     [api]
   );
@@ -61,6 +63,7 @@ function SupportContent() {
         body: JSON.stringify(payload),
       });
       setMessages((m) => [...m, res.message]);
+      setTicketStatus("NEW");
     } finally {
       setSending(false);
     }
@@ -99,7 +102,13 @@ function SupportContent() {
             </div>
             <div>
               <p className="font-semibold text-sm">{activeGame.name} Support</p>
-              <p className="text-xs text-muted">We&apos;ll reply here</p>
+              <p className="text-xs text-muted">
+                {ticketStatus === "NEW"
+                  ? "Waiting for support to reply…"
+                  : ticketStatus === "PENDING"
+                    ? "Support is helping you"
+                    : "We'll reply here"}
+              </p>
             </div>
           </div>
 
