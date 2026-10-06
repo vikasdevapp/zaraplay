@@ -15,14 +15,22 @@ HOST_ARGS=()
 for h in "${HOSTS[@]}"; do HOST_ARGS+=(-d "$h"); done
 
 mkdir -p certbot/conf certbot/www
-if [ ! -f "$CERT" ]; then
-  # First run: nginx can't start without a certificate, so issue one with certbot's own web
-  # server on port 80 (nginx stopped briefly). The certbot service renews it afterwards.
-  $COMPOSE stop nginx || true
+
+# Is the nginx service already running? If so we must never stop it to request a certificate —
+# that takes the whole site down (and the standalone cert step then fails on the busy port 80).
+nginx_running() { $COMPOSE ps --status running --services 2>/dev/null | grep -qx nginx; }
+
+if [ ! -f "$CERT" ] && ! nginx_running; then
+  # Genuine first run: no certificate and no nginx yet. Issue one with certbot's own web server
+  # on port 80 (nothing else is using it yet). The certbot service renews it afterwards.
   docker run --rm -p 80:80 -v "$PWD/certbot/conf:/etc/letsencrypt" certbot/certbot certonly \
     --standalone --non-interactive --agree-tos --register-unsafely-without-email \
     --cert-name "$DOMAIN" "${HOST_ARGS[@]}" \
     || { echo "Certificate request failed: check DNS for ${HOSTS[*]} points here and ports 80/443 are open in the security group." >&2; exit 1; }
+elif [ ! -f "$CERT" ]; then
+  # Cert file not found but nginx is already serving (cert may live elsewhere, or a transient
+  # check). Do NOT stop nginx — keep the site up and let the certbot service renew via webroot.
+  echo "No $CERT found, but nginx is already running — skipping standalone issuance to keep the site up." >&2
 else
   # A host was added since the certificate was issued: expand it in place. nginx keeps
   # running and answers the challenge from certbot/www, so the site stays up.
