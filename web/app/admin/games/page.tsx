@@ -15,6 +15,7 @@ interface Game {
   isActive: boolean;
   sortOrder: number;
   automationProvider: string | null;
+  shortCode: string | null;
   agentId: string | null;
   agent?: { id: string; username: string; fullName: string } | null;
   _count: { userGames: number };
@@ -26,7 +27,7 @@ interface AgentOption {
   fullName: string;
 }
 
-const emptyForm = { name: "", imageUrl: "", playUrl: "", isActive: true, automationProvider: "", agentId: "" };
+const emptyForm = { name: "", imageUrl: "", playUrl: "", isActive: true, automationProvider: "", agentId: "", shortCode: "" };
 
 export default function AdminGamesPage() {
   const api = useApi();
@@ -69,7 +70,7 @@ export default function AdminGamesPage() {
 
   function startEdit(game: Game) {
     setEditingId(game.id);
-    setForm({ name: game.name, imageUrl: game.imageUrl || "", playUrl: game.playUrl || "", isActive: game.isActive, automationProvider: game.automationProvider || "", agentId: game.agentId || "" });
+    setForm({ name: game.name, imageUrl: game.imageUrl || "", playUrl: game.playUrl || "", isActive: game.isActive, automationProvider: game.automationProvider || "", agentId: game.agentId || "", shortCode: game.shortCode || "" });
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -90,6 +91,7 @@ export default function AdminGamesPage() {
         isActive: form.isActive,
         automationProvider: form.automationProvider ? form.automationProvider : null,
         agentId: form.agentId ? form.agentId : null,
+        shortCode: form.shortCode.trim(),
       };
       if (editingId) {
         await api(`/api/admin/games/${editingId}`, { method: "PATCH", body: JSON.stringify(payload) });
@@ -155,6 +157,20 @@ export default function AdminGamesPage() {
           </select>
           <span className="block text-[11px] text-muted mt-1">
             On automatic, player actions are handled instantly by the game API, with the agent queue as a safe fallback.
+          </span>
+        </label>
+
+        <label className="text-xs text-muted block">
+          Username short code
+          <input
+            className="input mt-1 sm:w-64"
+            placeholder="e.g. jw"
+            maxLength={10}
+            value={form.shortCode}
+            onChange={(e) => setForm((f) => ({ ...f, shortCode: e.target.value.replace(/[^a-zA-Z0-9]/g, "") }))}
+          />
+          <span className="block text-[11px] text-muted mt-1">
+            Used in auto-generated usernames: firstname + digit + <b>code</b> + digits (e.g. mohit3<b>jw</b>75).
           </span>
         </label>
 

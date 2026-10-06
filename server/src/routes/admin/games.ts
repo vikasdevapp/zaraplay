@@ -56,6 +56,8 @@ const imageUrl = z
 const automation = z.enum(["JUWA"]).nullable();
 // The owning staff agent (User id, role AGENT). null/"" clears it.
 const agentId = z.string().max(40).nullable();
+// Short code used in auto-generated usernames (letters/numbers, e.g. "jw").
+const shortCode = z.string().trim().max(10).regex(/^[a-zA-Z0-9]*$/, "Short code: letters and numbers only.");
 
 const createSchema = z.object({
   name: z.string().min(1).max(60),
@@ -66,6 +68,7 @@ const createSchema = z.object({
   sortOrder: z.number().int().optional(),
   automationProvider: automation.optional(),
   agentId: agentId.optional(),
+  shortCode: shortCode.optional(),
 });
 
 // Rejects an agentId that isn't a real AGENT account; returns the normalized value (null to clear).
@@ -102,6 +105,7 @@ adminGamesRouter.post("/", async (req: AuthedRequest, res) => {
       sortOrder: parsed.data.sortOrder ?? 0,
       automationProvider: parsed.data.automationProvider ?? null,
       agentId: resolvedAgentId ?? null,
+      shortCode: parsed.data.shortCode || null,
     },
   });
   await logAudit(req.userId!, "GAME_CREATED", { targetType: "Game", targetId: game.id, meta: { name: game.name } });
@@ -116,6 +120,7 @@ const updateSchema = z.object({
   sortOrder: z.number().int().optional(),
   automationProvider: automation.optional(),
   agentId: agentId.optional(),
+  shortCode: shortCode.optional(),
 });
 
 adminGamesRouter.patch("/:id", async (req: AuthedRequest, res) => {
@@ -142,6 +147,7 @@ adminGamesRouter.patch("/:id", async (req: AuthedRequest, res) => {
       ...(parsed.data.sortOrder !== undefined ? { sortOrder: parsed.data.sortOrder } : {}),
       ...(parsed.data.automationProvider !== undefined ? { automationProvider: parsed.data.automationProvider } : {}),
       ...(resolvedAgentId !== undefined ? { agentId: resolvedAgentId } : {}),
+      ...(parsed.data.shortCode !== undefined ? { shortCode: parsed.data.shortCode || null } : {}),
     },
   });
   await logAudit(req.userId!, "GAME_UPDATED", { targetType: "Game", targetId: game.id, meta: parsed.data });

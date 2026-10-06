@@ -28,9 +28,20 @@ const CHARS = "abcdefghijkmnpqrstuvwxyz23456789"; // no look-alikes (l/1/o/0)
 function randomToken(n: number) {
   return Array.from(require("crypto").randomBytes(n) as Buffer, (b) => CHARS[b % CHARS.length]).join("");
 }
-// Letters/numbers/underscore only (Juwa code 18); kept short and unique.
-const newUsername = () => `zp${randomToken(8)}`;
 const newPassword = () => randomToken(10);
+
+/**
+ * Auto-generated game username: player's first name + one digit + game short code + 2–3 digits,
+ * e.g. "mohit3jw75". Letters/numbers only (Juwa code 18). The random digits keep it unique;
+ * the create flow retries with a fresh one if the platform says the name is taken.
+ */
+function newUsername(firstName: string | null | undefined, shortCode: string | null | undefined) {
+  const name = (firstName || "player").toLowerCase().replace(/[^a-z]/g, "").slice(0, 12) || "player";
+  const code = (shortCode || "gm").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 4) || "gm";
+  const d1 = Math.floor(Math.random() * 10); // one digit
+  const tail = Math.floor(Math.random() * 990) + 10; // 10–999 (two or three digits)
+  return `${name}${d1}${code}${tail}`;
+}
 
 export interface AutoCreateResult {
   created: boolean;
@@ -54,7 +65,7 @@ async function autoFinish(tx: Tx, requestId: string, data: Prisma.GameRequestUnc
  * load) via the API, then activate it here. Returns { created: false } to fall back to an agent.
  */
 export async function tryAutoCreateAccount(userGameId: string): Promise<AutoCreateResult> {
-  const ug = await prisma.userGame.findUnique({ where: { id: userGameId }, include: { game: true } });
+  const ug = await prisma.userGame.findUnique({ where: { id: userGameId }, include: { game: true, user: { select: { fullName: true } } } });
   if (!ug || ug.status !== "PENDING") return { created: false };
   if (!ug.game.automationProvider) return { created: false }; // manual game — expected, no log
   const client = clientFor(ug.game.automationProvider);
@@ -69,8 +80,9 @@ export async function tryAutoCreateAccount(userGameId: string): Promise<AutoCrea
 
   // Create the platform account (retry a new name if the platform says it's taken).
   let created: { userId: string; username: string; password: string } | null = null;
+  const firstName = (ug.user?.fullName || "").trim().split(/\s+/)[0];
   for (let attempt = 0; attempt < 3 && !created; attempt++) {
-    const username = newUsername();
+    const username = newUsername(firstName, ug.game.shortCode);
     const password = newPassword();
     const clash = await prisma.userGame.findFirst({ where: { gameId: ug.gameId, gameUsername: { equals: username, mode: "insensitive" } }, select: { id: true } });
     if (clash) continue;

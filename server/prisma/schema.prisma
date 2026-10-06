@@ -245,6 +245,8 @@ model Game {
   // When set, player actions (create account, load, reset, balance) run through the platform
   // API instead of the agent queue; failures fall back to a manual agent request.
   automationProvider GameAutomationProvider?
+  // Short code used when auto-generating usernames (e.g. "jw" for Juwa): name + digit + code + digits.
+  shortCode String?
   // This game's own support contact: players open a chat with this agent from the game card,
   // so each game can be supported by its own person (like each game has its own agent).
   supportAgentId String?

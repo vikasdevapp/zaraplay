@@ -19,8 +19,82 @@ interface UserDetail {
   blockedAt: string | null;
   blockedReason: string | null;
   wallet: { balance: string; freePlay: string; totalDeposited: string; lastDepositAmount: string } | null;
-  games: { id: string; gameUsername: string; balance: string; game: { name: string } }[];
+  games: { id: string; gameUsername: string | null; gamePassword: string | null; balance: string; game: { name: string } }[];
   transactions: { id: string; type: string; amount: string; status: string; adminNote: string | null; createdAt: string }[];
+}
+
+function GameLoginRow({ g, onChanged }: { g: UserDetail["games"][number]; onChanged: () => Promise<void> }) {
+  const api = useApi();
+  const [editing, setEditing] = useState(false);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPw, setShowPw] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function save() {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/api/admin/game-accounts/${g.id}/credentials`, {
+        method: "PUT",
+        body: JSON.stringify({ gameUsername: username, gamePassword: password }),
+      });
+      setEditing(false);
+      await onChanged();
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Could not update login.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <div className="py-2 space-y-2 text-sm">
+        <p className="font-medium">{g.game.name} — edit login</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <input className="input" placeholder="Game username" value={username} onChange={(e) => setUsername(e.target.value)} />
+          <input className="input" placeholder="Game password" value={password} onChange={(e) => setPassword(e.target.value)} />
+        </div>
+        {err && <p className="text-xs text-red-400">{err}</p>}
+        <div className="flex gap-2">
+          <button className="btn-primary text-xs px-3 py-1.5" disabled={busy} onClick={save}>
+            {busy ? "Saving…" : "Save"}
+          </button>
+          <button className="btn-ghost text-xs px-3 py-1.5" disabled={busy} onClick={() => setEditing(false)}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-2 py-2 text-sm">
+      <span className="font-medium shrink-0">{g.game.name}</span>
+      <span className="text-muted font-mono text-xs flex-1 text-center truncate">
+        {g.gameUsername || "—"}
+        {g.gamePassword ? ` / ${showPw ? g.gamePassword : "••••••"}` : ""}
+        {g.gamePassword && (
+          <button className="ml-1 text-primary font-sans" onClick={() => setShowPw((s) => !s)}>
+            {showPw ? "hide" : "show"}
+          </button>
+        )}
+      </span>
+      <span className="text-primary shrink-0">${Number(g.balance).toFixed(2)}</span>
+      <button
+        className="text-xs text-primary underline shrink-0"
+        onClick={() => {
+          setUsername(g.gameUsername ?? "");
+          setPassword(g.gamePassword ?? "");
+          setEditing(true);
+        }}
+      >
+        Edit login
+      </button>
+    </div>
+  );
 }
 
 export default function AdminUserDetailPage() {
@@ -193,11 +267,7 @@ export default function AdminUserDetailPage() {
         {user.games.length === 0 && <p className="text-muted text-sm">No games added.</p>}
         <div className="divide-y divide-border">
           {user.games.map((g) => (
-            <div key={g.id} className="flex items-center justify-between py-2 text-sm">
-              <span>{g.game.name}</span>
-              <span className="text-muted font-mono text-xs">{g.gameUsername}</span>
-              <span className="text-primary">${Number(g.balance).toFixed(2)}</span>
-            </div>
+            <GameLoginRow key={g.id} g={g} onChanged={load} />
           ))}
         </div>
       </div>

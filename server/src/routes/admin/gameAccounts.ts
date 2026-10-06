@@ -1,8 +1,28 @@
 import { Router } from "express";
 import { Prisma } from "@prisma/client";
+import { z } from "zod";
 import { prisma } from "../../lib/prisma";
+import { AuthedRequest } from "../../middleware/auth";
+import { logAudit } from "../../lib/audit";
+import { GameError, updateCredentials } from "../../lib/gameAccounts";
 
 export const adminGameAccountsRouter = Router();
+
+// Replace the stored game login (e.g. the client changed the ID/password on the game platform).
+const credentialsSchema = z.object({ gameUsername: z.string().min(1).max(100), gamePassword: z.string().min(1).max(100) });
+
+adminGameAccountsRouter.put("/:id/credentials", async (req: AuthedRequest, res) => {
+  const parsed = credentialsSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Username and password are required." });
+  try {
+    await updateCredentials(req.params.id, parsed.data.gameUsername, parsed.data.gamePassword);
+    await logAudit(req.userId!, "GAME_CREDENTIALS_UPDATED", { targetType: "UserGame", targetId: req.params.id });
+    res.json({ ok: true });
+  } catch (err) {
+    if (err instanceof GameError) return res.status(err.status).json({ error: err.message });
+    throw err;
+  }
+});
 
 adminGameAccountsRouter.get("/", async (req, res) => {
   const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
