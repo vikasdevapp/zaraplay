@@ -552,7 +552,6 @@ export default function GamesPage() {
             <div key={g.id} className="card flex flex-col items-center text-center gap-2">
               <GameThumb game={g} className="w-full aspect-square rounded-xl" />
               <p className="text-sm font-medium">{g.name}</p>
-              {g.automationProvider && <span className="text-[10px] text-green-400 font-medium">⚡ Instant setup</span>}
               <button onClick={() => openAction({ kind: "add", game: g })} className="btn-gold text-xs py-2 px-3 w-full">
                 + Add Game
               </button>
