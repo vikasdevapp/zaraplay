@@ -9,6 +9,7 @@ import { agentStaffRouter } from "./staff";
 import { agentSupportRouter } from "./support";
 import { agentPlayersRouter } from "./players";
 import { makeCashoutsRouter } from "../admin/cashouts";
+import { relinkGameUserId } from "../../lib/gameAutomation";
 import { scopedGameIds, gameIdWhere, nestedGameIdWhere, playerInScopeWhere } from "../../lib/gameScope";
 import { GameError, claimRequest, completeRequest, rejectRequest, releaseRequest, syncBalance, updateCredentials } from "../../lib/gameAccounts";
 
@@ -295,8 +296,10 @@ agentRouter.put("/game-accounts/:id/credentials", async (req: AuthedRequest, res
   try {
     await assertAccountInScope(req, req.params.id);
     await updateCredentials(req.params.id, parsed.data.gameUsername, parsed.data.gamePassword);
-    await logAudit(req.userId!, "GAME_CREDENTIALS_UPDATED", { targetType: "UserGame", targetId: req.params.id });
-    res.json({ ok: true });
+    // Point automation at the (possibly existing) platform account this login belongs to.
+    const relink = await relinkGameUserId(req.params.id);
+    await logAudit(req.userId!, "GAME_CREDENTIALS_UPDATED", { targetType: "UserGame", targetId: req.params.id, meta: { relinked: relink.linked } });
+    res.json({ ok: true, ...relink });
   } catch (err) {
     sendError(res, err);
   }

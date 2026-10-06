@@ -36,10 +36,14 @@ function GameLoginRow({ g, onChanged }: { g: UserDetail["games"][number]; onChan
     setBusy(true);
     setErr(null);
     try {
-      await api(`/api/admin/game-accounts/${g.id}/credentials`, {
+      const res = await api<{ linked?: boolean; reason?: string }>(`/api/admin/game-accounts/${g.id}/credentials`, {
         method: "PUT",
         body: JSON.stringify({ gameUsername: username, gamePassword: password }),
       });
+      if (res.reason) {
+        setErr(`Saved, but couldn't link to the game account (${res.reason}). Make sure the username exists on the game platform, or loads/withdraws may go to the wrong account.`);
+        return;
+      }
       setEditing(false);
       await onChanged();
     } catch (e) {

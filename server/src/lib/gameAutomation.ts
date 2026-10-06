@@ -174,6 +174,28 @@ export async function tryAutoRecharge(requestId: string): Promise<boolean> {
   return !!notify;
 }
 
+/**
+ * After an account's stored login is changed to point at an EXISTING platform account, re-resolve
+ * the platform user id from the username so loads/withdraws/balance target that real account (not
+ * the one we originally created). Returns the new id, or a reason it couldn't be linked. No-op for
+ * manual games. Call this whenever credentials are replaced on an automated game.
+ */
+export async function relinkGameUserId(userGameId: string): Promise<{ linked: boolean; gameUserId?: string; reason?: string }> {
+  const ug = await prisma.userGame.findUnique({ where: { id: userGameId }, include: { game: true } });
+  if (!ug || !ug.gameUsername) return { linked: false, reason: "No account to link." };
+  const client = clientFor(ug.game.automationProvider);
+  if (!client) return { linked: false }; // manual game — nothing to link, not an error
+  try {
+    const gameUserId = await client.getUserId(ug.gameUsername);
+    await prisma.userGame.update({ where: { id: ug.id }, data: { gameUserId } });
+    return { linked: true, gameUserId };
+  } catch (err) {
+    const detail = err instanceof JuwaError ? `code ${err.code}: ${err.message}` : err instanceof Error ? err.message : String(err);
+    console.warn(`[juwa-auto] relink failed for ${ug.gameUsername} on ${ug.game.name} (${detail}).`);
+    return { linked: false, reason: detail };
+  }
+}
+
 /** Player asked to reset their password on an automated game: set a new one via the API. */
 export async function tryAutoResetPassword(requestId: string): Promise<boolean> {
   const request = await prisma.gameRequest.findUnique({ where: { id: requestId }, include: { userGame: { include: { game: true } } } });

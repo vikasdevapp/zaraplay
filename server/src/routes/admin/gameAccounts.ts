@@ -5,6 +5,7 @@ import { prisma } from "../../lib/prisma";
 import { AuthedRequest } from "../../middleware/auth";
 import { logAudit } from "../../lib/audit";
 import { GameError, updateCredentials } from "../../lib/gameAccounts";
+import { relinkGameUserId } from "../../lib/gameAutomation";
 
 export const adminGameAccountsRouter = Router();
 
@@ -16,8 +17,10 @@ adminGameAccountsRouter.put("/:id/credentials", async (req: AuthedRequest, res) 
   if (!parsed.success) return res.status(400).json({ error: "Username and password are required." });
   try {
     await updateCredentials(req.params.id, parsed.data.gameUsername, parsed.data.gamePassword);
-    await logAudit(req.userId!, "GAME_CREDENTIALS_UPDATED", { targetType: "UserGame", targetId: req.params.id });
-    res.json({ ok: true });
+    // Point automation at the (possibly existing) platform account this login belongs to.
+    const relink = await relinkGameUserId(req.params.id);
+    await logAudit(req.userId!, "GAME_CREDENTIALS_UPDATED", { targetType: "UserGame", targetId: req.params.id, meta: { relinked: relink.linked } });
+    res.json({ ok: true, ...relink });
   } catch (err) {
     if (err instanceof GameError) return res.status(err.status).json({ error: err.message });
     throw err;

@@ -48,7 +48,13 @@ function Row({ a, onChanged }: { a: Account; onChanged: () => Promise<void> }) {
       if (mode === "balance") {
         await api(`/api/agent/game-accounts/${a.id}/balance`, { method: "POST", body: JSON.stringify({ balance: Number(balance) }) });
       } else {
-        await api(`/api/agent/game-accounts/${a.id}/credentials`, { method: "PUT", body: JSON.stringify({ gameUsername: username, gamePassword: password }) });
+        const res = await api<{ linked?: boolean; reason?: string }>(`/api/agent/game-accounts/${a.id}/credentials`, { method: "PUT", body: JSON.stringify({ gameUsername: username, gamePassword: password }) });
+        // On an automated game, if we couldn't match the username to a platform account, warn —
+        // recharge/withdraw would otherwise target the wrong account.
+        if (res.reason) {
+          setError(`Saved, but couldn't link to the game account (${res.reason}). Make sure the username exists on the game platform, or loads/withdraws may go to the wrong account.`);
+          return;
+        }
       }
       setMode("view");
       await onChanged();
