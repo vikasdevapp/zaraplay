@@ -67,6 +67,7 @@ enum GameRequestStatus {
 enum GameAutomationProvider {
   JUWA
   GAMEVAULT
+  JUWA2
 }
 
 enum GameTxType {

@@ -22,7 +22,7 @@ export interface JuwaConfig {
 
 // Providers that speak this exact external API protocol. Each has its own BASE_URL / AGENT_ID /
 // SECRET_KEY / BALANCE_DIVISOR env vars under its own prefix.
-export type PlatformProvider = "JUWA" | "GAMEVAULT";
+export type PlatformProvider = "JUWA" | "GAMEVAULT" | "JUWA2";
 
 /** Reads one provider's config from the env (prefix = the provider name, e.g. JUWA_ / GAMEVAULT_). */
 export function platformConfigFrom(provider: PlatformProvider, env: NodeJS.ProcessEnv = process.env): JuwaConfig | null {

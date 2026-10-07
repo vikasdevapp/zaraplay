@@ -16,7 +16,7 @@ import { settleWithdraw } from "./cashoutRules";
 type Tx = Prisma.TransactionClient;
 
 // Providers that run through the shared external API (Juwa, Game Vault, …).
-const PLATFORM_PROVIDERS: PlatformProvider[] = ["JUWA", "GAMEVAULT"];
+const PLATFORM_PROVIDERS: PlatformProvider[] = ["JUWA", "GAMEVAULT", "JUWA2"];
 
 export function isAutomated(game: { automationProvider: string | null }) {
   return !!game.automationProvider && (PLATFORM_PROVIDERS as string[]).includes(game.automationProvider);
