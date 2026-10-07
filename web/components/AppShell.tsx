@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, ReactNode } from "react";
 import { useAuth } from "@/context/AuthContext";
-import Logo from "@/components/Logo";
 import NotificationBell from "@/components/NotificationBell";
 
 const NAV_ITEMS = [
@@ -35,10 +35,10 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <header className="sticky top-0 z-20 bg-surface/95 backdrop-blur border-b border-border" style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}>
-        <div className="max-w-5xl mx-auto flex items-center justify-between px-4 py-3">
-          <Link href="/dashboard">
-            <Logo size="sm" />
+      <header className="sticky top-0 z-20 bg-black border-b border-gray-600" style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}>
+        <div className="max-w-5xl mx-auto flex items-center justify-between px-4 py-2">
+          <Link href="/dashboard" className="flex items-center">
+            <Image src="/logo.jpeg" alt="Zara Plays" width={48} height={48} className="h-12 w-12 rounded-lg object-contain" priority />
           </Link>
           <nav className="hidden md:flex items-center gap-1">
             {NAV_ITEMS.map((item) => (
