@@ -38,7 +38,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
       <header className="sticky top-0 z-20 bg-black border-b border-gray-600" style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}>
         <div className="max-w-5xl mx-auto flex items-center justify-between px-4 py-2">
           <Link href="/dashboard" className="flex items-center">
-            <Image src="/logo.jpeg" alt="Zara Plays" width={48} height={48} className="h-12 w-12 rounded-lg object-contain" priority />
+            <Image src="/logo.png" alt="Zara Plays" width={48} height={48} className="h-12 w-12 object-contain" priority />
           </Link>
           <nav className="hidden md:flex items-center gap-1">
             {NAV_ITEMS.map((item) => (

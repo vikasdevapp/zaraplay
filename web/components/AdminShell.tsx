@@ -74,7 +74,7 @@ export default function AdminShell({ children }: { children: ReactNode }) {
       >
         <div className="px-4 py-4">
           <Link href="/admin" className="block">
-            <Image src="/logo.jpeg" alt="Zara Plays" width={176} height={176} className="w-28 h-auto rounded-xl" priority />
+            <Image src="/logo.png" alt="Zara Plays" width={176} height={176} className="w-28 h-auto" priority />
           </Link>
           <p className="text-[10px] tracking-widest text-muted mt-2">
             {user.role === "MASTER_ADMIN" ? "MASTER ADMIN" : "ADMIN PANEL"}

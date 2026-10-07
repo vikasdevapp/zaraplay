@@ -15,11 +15,11 @@ export default function Logo({ size = "md", full = false }: LogoProps) {
     const px = FULL_PX[size];
     return (
       <Image
-        src="/logo.jpeg"
+        src="/logo.png"
         alt="Zara Plays — Play Until You Win"
         width={px}
         height={px}
-        className="rounded-2xl"
+        className="object-contain"
         priority
       />
     );
@@ -28,8 +28,8 @@ export default function Logo({ size = "md", full = false }: LogoProps) {
   const px = MARK_PX[size];
   return (
     <div className="flex items-center gap-2">
-      <div className="relative overflow-hidden rounded-lg shrink-0" style={{ width: px, height: px }}>
-        <Image src="/logo.jpeg" alt="Zara Plays" fill sizes={`${px}px`} className="object-contain" priority />
+      <div className="relative overflow-hidden shrink-0" style={{ width: px, height: px }}>
+        <Image src="/logo.png" alt="Zara Plays" fill sizes={`${px}px`} className="object-contain" priority />
       </div>
       <span className={`font-display font-bold tracking-wide text-white ${TEXT_SIZE[size]}`}>
         ZARA <span className="text-primary">PLAYS</span>
