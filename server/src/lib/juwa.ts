@@ -20,13 +20,22 @@ export interface JuwaConfig {
   balanceDivisor: number;
 }
 
-export function juwaConfigFrom(env: NodeJS.ProcessEnv = process.env): JuwaConfig | null {
-  const baseUrl = (env.JUWA_BASE_URL || "").replace(/\/+$/, "");
-  const agentId = env.JUWA_AGENT_ID || "";
-  const secretKey = env.JUWA_SECRET_KEY || "";
+// Providers that speak this exact external API protocol. Each has its own BASE_URL / AGENT_ID /
+// SECRET_KEY / BALANCE_DIVISOR env vars under its own prefix.
+export type PlatformProvider = "JUWA" | "GAMEVAULT";
+
+/** Reads one provider's config from the env (prefix = the provider name, e.g. JUWA_ / GAMEVAULT_). */
+export function platformConfigFrom(provider: PlatformProvider, env: NodeJS.ProcessEnv = process.env): JuwaConfig | null {
+  const baseUrl = (env[`${provider}_BASE_URL`] || "").replace(/\/+$/, "");
+  const agentId = env[`${provider}_AGENT_ID`] || "";
+  const secretKey = env[`${provider}_SECRET_KEY`] || "";
   if (!baseUrl || !agentId || !secretKey) return null;
-  const divisor = Number(env.JUWA_BALANCE_DIVISOR);
+  const divisor = Number(env[`${provider}_BALANCE_DIVISOR`]);
   return { baseUrl, agentId, secretKey, balanceDivisor: Number.isFinite(divisor) && divisor > 0 ? divisor : 1 };
+}
+
+export function juwaConfigFrom(env: NodeJS.ProcessEnv = process.env): JuwaConfig | null {
+  return platformConfigFrom("JUWA", env);
 }
 
 // Error codes 1-23 / 400 from the dictionary, mapped to messages we can act on or show.
@@ -167,5 +176,11 @@ export class JuwaClient {
 
 export function getJuwaClient(env: NodeJS.ProcessEnv = process.env): JuwaClient | null {
   const config = juwaConfigFrom(env);
+  return config ? new JuwaClient(config) : null;
+}
+
+/** A client for any supported platform provider, or null if its credentials aren't configured. */
+export function getPlatformClient(provider: PlatformProvider, env: NodeJS.ProcessEnv = process.env): JuwaClient | null {
+  const config = platformConfigFrom(provider, env);
   return config ? new JuwaClient(config) : null;
 }

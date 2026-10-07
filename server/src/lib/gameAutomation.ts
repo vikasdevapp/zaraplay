@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { notifyUser } from "./webpush";
 import { loadBasis, recordGameTx } from "./gameAccounts";
-import { getJuwaClient, JuwaClient, JuwaError } from "./juwa";
+import { getPlatformClient, JuwaClient, JuwaError, PlatformProvider } from "./juwa";
 import { getPlatformSettings } from "./settings";
 import { settleWithdraw } from "./cashoutRules";
 
@@ -15,13 +15,16 @@ import { settleWithdraw } from "./cashoutRules";
 
 type Tx = Prisma.TransactionClient;
 
+// Providers that run through the shared external API (Juwa, Game Vault, …).
+const PLATFORM_PROVIDERS: PlatformProvider[] = ["JUWA", "GAMEVAULT"];
+
 export function isAutomated(game: { automationProvider: string | null }) {
-  return game.automationProvider === "JUWA";
+  return !!game.automationProvider && (PLATFORM_PROVIDERS as string[]).includes(game.automationProvider);
 }
 
 function clientFor(provider: string | null): JuwaClient | null {
-  // Only JUWA today; this is where other providers plug in.
-  return provider === "JUWA" ? getJuwaClient() : null;
+  if (provider && (PLATFORM_PROVIDERS as string[]).includes(provider)) return getPlatformClient(provider as PlatformProvider);
+  return null;
 }
 
 const CHARS = "abcdefghijkmnpqrstuvwxyz23456789"; // no look-alikes (l/1/o/0)
@@ -70,7 +73,7 @@ export async function tryAutoCreateAccount(userGameId: string): Promise<AutoCrea
   if (!ug.game.automationProvider) return { created: false }; // manual game — expected, no log
   const client = clientFor(ug.game.automationProvider);
   if (!client) {
-    console.warn(`[juwa-auto] ${ug.game.name} is set to automation but JUWA_BASE_URL/JUWA_AGENT_ID/JUWA_SECRET_KEY are not all set on the server — using the agent queue.`);
+    console.warn(`[auto] ${ug.game.name} is set to ${ug.game.automationProvider} automation but ${ug.game.automationProvider}_BASE_URL/_AGENT_ID/_SECRET_KEY are not all set on the server — using the agent queue.`);
     return { created: false };
   }
 

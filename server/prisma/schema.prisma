@@ -66,6 +66,7 @@ enum GameRequestStatus {
 // Game platforms we can drive automatically via their agent API. null = fully manual (agents).
 enum GameAutomationProvider {
   JUWA
+  GAMEVAULT
 }
 
 enum GameTxType {
