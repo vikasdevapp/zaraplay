@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, ReactNode } from "react";
 import { useAuth } from "@/context/AuthContext";
-import Logo from "@/components/Logo";
 import ConfirmDialog from "@/components/ConfirmDialog";
 
 const NAV_ITEMS = [
@@ -69,14 +69,14 @@ export default function AdminShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen flex flex-col md:flex-row">
       <aside
-        className="md:w-56 shrink-0 bg-surface border-b md:border-b-0 md:border-r border-border md:min-h-screen"
+        className="md:w-56 shrink-0 bg-black border-b md:border-b-0 md:border-r border-gray-600 md:min-h-screen"
         style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}
       >
         <div className="px-4 py-4">
-          <Link href="/admin">
-            <Logo size="sm" />
+          <Link href="/admin" className="block">
+            <Image src="/logo.jpeg" alt="Zara Plays" width={176} height={176} className="w-28 h-auto rounded-xl" priority />
           </Link>
-          <p className="text-[10px] tracking-widest text-muted mt-1">
+          <p className="text-[10px] tracking-widest text-muted mt-2">
             {user.role === "MASTER_ADMIN" ? "MASTER ADMIN" : "ADMIN PANEL"}
           </p>
         </div>
