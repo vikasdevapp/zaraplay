@@ -84,7 +84,7 @@ export default function ForgotPasswordPage() {
     <div className="min-h-screen flex items-center justify-center px-4">
       <div className="w-full max-w-sm card">
         <div className="text-center mb-6 flex flex-col items-center">
-          <Logo size="md" />
+          <Logo size="md" full />
           <h1 className="text-xl font-bold mt-3">Forgot Password</h1>
           <p className="text-sm text-muted">
             {step === "request"

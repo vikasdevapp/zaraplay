@@ -28,16 +28,8 @@ export default function Logo({ size = "md", full = false }: LogoProps) {
   const px = MARK_PX[size];
   return (
     <div className="flex items-center gap-2">
-      <div className="relative overflow-hidden rounded-lg shrink-0 bg-black" style={{ width: px, height: px }}>
-        <Image
-          src="/logo.jpeg"
-          alt="Zara Plays"
-          fill
-          sizes={`${px}px`}
-          className="object-cover"
-          style={{ objectPosition: "50% 32%", transform: "scale(1.9)" }}
-          priority
-        />
+      <div className="relative overflow-hidden rounded-lg shrink-0" style={{ width: px, height: px }}>
+        <Image src="/logo.jpeg" alt="Zara Plays" fill sizes={`${px}px`} className="object-contain" priority />
       </div>
       <span className={`font-display font-bold tracking-wide text-white ${TEXT_SIZE[size]}`}>
         ZARA <span className="text-primary">PLAYS</span>

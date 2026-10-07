@@ -36,7 +36,7 @@ function SignupForm() {
     <div className="min-h-screen flex items-center justify-center px-4 py-10">
       <div className="w-full max-w-sm card">
         <div className="text-center mb-6 flex flex-col items-center">
-          <Logo size="md" />
+          <Logo size="md" full />
           <h1 className="text-xl font-bold mt-3">Create your account</h1>
           <p className="text-sm text-muted">
             {referralCode ? `Signing up with referral code ${referralCode}` : "Join Zara Plays"}

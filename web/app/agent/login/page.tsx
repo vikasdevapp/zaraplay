@@ -64,7 +64,7 @@ export default function AgentLoginPage() {
         {/* Brand panel */}
         <div className="relative bg-gradient-to-br from-[#1a0505] via-black to-black p-8 md:p-10 flex flex-col justify-between min-h-[260px] md:min-h-[560px]">
           <div>
-            <Logo size="md" />
+            <Logo size="md" full />
             <h1 className="font-display text-3xl md:text-4xl font-bold mt-8 leading-tight">
               Agent Desk
               <br />
