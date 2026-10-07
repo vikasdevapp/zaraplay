@@ -5,6 +5,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Only one deploy at a time: auto-deploy (GitHub Actions) and a manual run racing each other
+# causes container-name conflicts. A second concurrent deploy waits briefly, then bails out.
+exec 9>/tmp/zaraplays-deploy.lock
+if ! flock -w 300 9; then
+  echo "Another deploy is already running — skipping this one." >&2
+  exit 0
+fi
+
 DOMAIN="${DOMAIN:-zaraplays.com}"
 # Every host the one certificate must cover (nginx/default.conf serves all of them).
 HOSTS=("$DOMAIN" "www.$DOMAIN" "backend.$DOMAIN")
