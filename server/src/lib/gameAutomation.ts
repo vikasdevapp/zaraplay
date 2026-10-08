@@ -2,7 +2,8 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { notifyUser } from "./webpush";
 import { loadBasis, recordGameTx } from "./gameAccounts";
-import { getPlatformClient, JuwaClient, JuwaError, PlatformProvider } from "./juwa";
+import { JuwaClient, JuwaError } from "./juwa";
+import { providerMeta, resolvePlatformConfig } from "./platformProviders";
 import { getPlatformSettings } from "./settings";
 import { settleWithdraw } from "./cashoutRules";
 
@@ -15,16 +16,19 @@ import { settleWithdraw } from "./cashoutRules";
 
 type Tx = Prisma.TransactionClient;
 
-// Providers that run through the shared external API (Juwa, Game Vault, …).
-const PLATFORM_PROVIDERS: PlatformProvider[] = ["JUWA", "GAMEVAULT", "JUWA2"];
-
 export function isAutomated(game: { automationProvider: string | null }) {
-  return !!game.automationProvider && (PLATFORM_PROVIDERS as string[]).includes(game.automationProvider);
+  return !!game.automationProvider && !!providerMeta(game.automationProvider);
 }
 
-function clientFor(provider: string | null): JuwaClient | null {
-  if (provider && (PLATFORM_PROVIDERS as string[]).includes(provider)) return getPlatformClient(provider as PlatformProvider);
-  return null;
+// Builds the platform client for a provider from its live (DB or env) credentials. Only the
+// JUWA-family protocol is wired today; other styles (e.g. Cash Frenzy) plug in here.
+async function clientFor(provider: string | null): Promise<JuwaClient | null> {
+  if (!provider) return null;
+  const meta = providerMeta(provider);
+  if (!meta || meta.style !== "JUWA") return null;
+  const cfg = await resolvePlatformConfig(provider);
+  if (!cfg) return null;
+  return new JuwaClient({ baseUrl: cfg.baseUrl, agentId: cfg.agentId, secretKey: cfg.secret, balanceDivisor: cfg.balanceDivisor });
 }
 
 const CHARS = "abcdefghijkmnpqrstuvwxyz23456789"; // no look-alikes (l/1/o/0)
@@ -71,7 +75,7 @@ export async function tryAutoCreateAccount(userGameId: string): Promise<AutoCrea
   const ug = await prisma.userGame.findUnique({ where: { id: userGameId }, include: { game: true, user: { select: { fullName: true } } } });
   if (!ug || ug.status !== "PENDING") return { created: false };
   if (!ug.game.automationProvider) return { created: false }; // manual game — expected, no log
-  const client = clientFor(ug.game.automationProvider);
+  const client = await clientFor(ug.game.automationProvider);
   if (!client) {
     console.warn(`[auto] ${ug.game.name} is set to ${ug.game.automationProvider} automation but ${ug.game.automationProvider}_BASE_URL/_AGENT_ID/_SECRET_KEY are not all set on the server — using the agent queue.`);
     return { created: false };
@@ -155,7 +159,7 @@ export async function tryAutoRecharge(requestId: string): Promise<boolean> {
   const request = await prisma.gameRequest.findUnique({ where: { id: requestId }, include: { userGame: { include: { game: true } } } });
   if (!request || request.type !== "RECHARGE" || request.status !== "PENDING") return false;
   const ug = request.userGame;
-  const client = clientFor(ug.game.automationProvider);
+  const client = await clientFor(ug.game.automationProvider);
   if (!client || !ug.gameUserId || ug.status !== "ACTIVE") return false;
 
   const amount = Number(request.amount);
@@ -186,7 +190,7 @@ export async function tryAutoRecharge(requestId: string): Promise<boolean> {
 export async function relinkGameUserId(userGameId: string): Promise<{ linked: boolean; gameUserId?: string; reason?: string }> {
   const ug = await prisma.userGame.findUnique({ where: { id: userGameId }, include: { game: true } });
   if (!ug || !ug.gameUsername) return { linked: false, reason: "No account to link." };
-  const client = clientFor(ug.game.automationProvider);
+  const client = await clientFor(ug.game.automationProvider);
   if (!client) return { linked: false }; // manual game — nothing to link, not an error
   try {
     const gameUserId = await client.getUserId(ug.gameUsername);
@@ -204,7 +208,7 @@ export async function tryAutoResetPassword(requestId: string): Promise<boolean> 
   const request = await prisma.gameRequest.findUnique({ where: { id: requestId }, include: { userGame: { include: { game: true } } } });
   if (!request || request.type !== "PASSWORD_RESET" || request.status !== "PENDING") return false;
   const ug = request.userGame;
-  const client = clientFor(ug.game.automationProvider);
+  const client = await clientFor(ug.game.automationProvider);
   if (!client || !ug.gameUserId) return false;
 
   const password = newPassword();
@@ -227,7 +231,7 @@ export async function tryAutoBalanceCheck(requestId: string): Promise<boolean> {
   const request = await prisma.gameRequest.findUnique({ where: { id: requestId }, include: { userGame: { include: { game: true } } } });
   if (!request || request.type !== "BALANCE_CHECK" || request.status !== "PENDING") return false;
   const ug = request.userGame;
-  const client = clientFor(ug.game.automationProvider);
+  const client = await clientFor(ug.game.automationProvider);
   if (!client || !ug.gameUserId) return false;
 
   let balance: number;
@@ -268,7 +272,7 @@ export type AutoWithdrawResult =
 export async function autoWithdrawFromGame(userId: string, userGameId: string, requested: number): Promise<AutoWithdrawResult> {
   const ug = await prisma.userGame.findFirst({ where: { id: userGameId, userId }, include: { game: true } });
   if (!ug || !ug.gameUserId || ug.status !== "ACTIVE") return { status: "fallback" };
-  const client = clientFor(ug.game.automationProvider);
+  const client = await clientFor(ug.game.automationProvider);
   if (!client) return { status: "fallback" };
 
   // Read the live balance (and force the player offline so the later withdraw isn't blocked).

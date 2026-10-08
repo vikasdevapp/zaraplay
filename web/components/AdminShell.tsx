@@ -15,6 +15,7 @@ const NAV_ITEMS = [
   { href: "/admin/cashouts", label: "Cashouts", icon: "💸" },
   { href: "/admin/games", label: "Games", icon: "🎮" },
   { href: "/admin/game-accounts", label: "Game Accounts", icon: "🕹️" },
+  { href: "/admin/platforms", label: "Game Platforms", icon: "🔌" },
   { href: "/admin/users", label: "Users", icon: "👥" },
   { href: "/admin/vip-tiers", label: "VIP Tiers", icon: "🏆" },
   { href: "/admin/marketplace", label: "Marketplace", icon: "🛍️" },

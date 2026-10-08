@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { requireAuth, requireRole } from "../../middleware/auth";
 import { adminGamesRouter } from "./games";
+import { adminPlatformsRouter } from "./platforms";
 import { adminUsersRouter } from "./users";
 import { adminCashoutsRouter } from "./cashouts";
 import { adminBroadcastRouter } from "./broadcast";
@@ -27,6 +28,7 @@ adminRouter.use(requireAuth);
 adminRouter.use(requireRole("ADMIN", "MASTER_ADMIN"));
 
 adminRouter.use("/games", adminGamesRouter);
+adminRouter.use("/platforms", adminPlatformsRouter);
 adminRouter.use("/users", adminUsersRouter);
 adminRouter.use("/cashouts", adminCashoutsRouter);
 adminRouter.use("/agent-team", adminAgentTeamRouter);
