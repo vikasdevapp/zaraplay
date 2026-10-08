@@ -20,6 +20,18 @@ export interface JuwaConfig {
   balanceDivisor: number;
 }
 
+// The common surface the automation layer uses, so different platform connectors are interchangeable.
+export interface GamePlatformClient {
+  addUser(account: string, loginPwd: string): Promise<{ accountName: string; userId: string }>;
+  recharge(userId: string, amount: number, orderId: string): Promise<{ transactionId: string }>;
+  withdraw(userId: string, amount: number, orderId: string): Promise<{ transactionId: string }>;
+  userBalance(userId: string): Promise<number>;
+  agentBalance(): Promise<number>;
+  getUserId(accountName: string): Promise<string>;
+  resetPassword(userId: string, loginPwd: string): Promise<void>;
+  playerOffline(userId: string): Promise<void>;
+}
+
 // Providers that speak this exact external API protocol. Each has its own BASE_URL / AGENT_ID /
 // SECRET_KEY / BALANCE_DIVISOR env vars under its own prefix.
 export type PlatformProvider = "JUWA" | "GAMEVAULT" | "JUWA2";
@@ -90,7 +102,7 @@ interface Envelope<T> {
   count?: number;
 }
 
-export class JuwaClient {
+export class JuwaClient implements GamePlatformClient {
   constructor(private config: JuwaConfig) {}
 
   private async call<T>(endpoint: string, fields: Record<string, string | number>): Promise<T> {

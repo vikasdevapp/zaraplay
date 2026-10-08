@@ -156,6 +156,7 @@ export default function AdminGamesPage() {
             <option value="JUWA">Juwa API (instant, automatic)</option>
             <option value="GAMEVAULT">Game Vault API (instant, automatic)</option>
             <option value="JUWA2">Juwa 2.0 API (instant, automatic)</option>
+            <option value="CASHFRENZY">Cash Frenzy API (instant, automatic)</option>
           </select>
           <span className="block text-[11px] text-muted mt-1">
             On automatic, player actions are handled instantly by the game API, with the agent queue as a safe fallback.

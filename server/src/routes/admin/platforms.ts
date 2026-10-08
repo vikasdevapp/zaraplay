@@ -5,7 +5,8 @@ import { AuthedRequest } from "../../middleware/auth";
 import { logAudit } from "../../lib/audit";
 import { sealSecret, isSecretBoxConfigured } from "../../lib/secretBox";
 import { PROVIDERS, providerMeta, resolvePlatformConfig } from "../../lib/platformProviders";
-import { JuwaClient, JuwaError } from "../../lib/juwa";
+import { JuwaClient, JuwaError, GamePlatformClient } from "../../lib/juwa";
+import { CashFrenzyClient } from "../../lib/cashfrenzy";
 
 // Admin-managed, encrypted credentials for the game-platform agent APIs (self-service, no .env).
 export const adminPlatformsRouter = Router();
@@ -81,11 +82,9 @@ adminPlatformsRouter.post("/:provider/test", async (req: AuthedRequest, res) => 
   const cfg = await resolvePlatformConfig(meta.key);
   if (!cfg) return res.status(400).json({ error: "No credentials saved for this provider yet." });
 
-  if (meta.style !== "JUWA") {
-    return res.json({ ok: true, note: "Credentials saved. Automated connection test for this platform isn't available yet." });
-  }
+  const base = { baseUrl: cfg.baseUrl, agentId: cfg.agentId, secretKey: cfg.secret, balanceDivisor: cfg.balanceDivisor };
+  const client: GamePlatformClient = meta.style === "CASHFRENZY" ? new CashFrenzyClient(base) : new JuwaClient(base);
   try {
-    const client = new JuwaClient({ baseUrl: cfg.baseUrl, agentId: cfg.agentId, secretKey: cfg.secret, balanceDivisor: cfg.balanceDivisor });
     const balance = await client.agentBalance();
     res.json({ ok: true, agentBalance: balance });
   } catch (err) {

@@ -2,7 +2,8 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { notifyUser } from "./webpush";
 import { loadBasis, recordGameTx } from "./gameAccounts";
-import { JuwaClient, JuwaError } from "./juwa";
+import { JuwaClient, JuwaError, GamePlatformClient } from "./juwa";
+import { CashFrenzyClient } from "./cashfrenzy";
 import { providerMeta, resolvePlatformConfig } from "./platformProviders";
 import { getPlatformSettings } from "./settings";
 import { settleWithdraw } from "./cashoutRules";
@@ -20,15 +21,18 @@ export function isAutomated(game: { automationProvider: string | null }) {
   return !!game.automationProvider && !!providerMeta(game.automationProvider);
 }
 
-// Builds the platform client for a provider from its live (DB or env) credentials. Only the
-// JUWA-family protocol is wired today; other styles (e.g. Cash Frenzy) plug in here.
-async function clientFor(provider: string | null): Promise<JuwaClient | null> {
+// Builds the platform client for a provider from its live (DB or env) credentials, picking the
+// connector by the provider's protocol family. New styles plug in here.
+async function clientFor(provider: string | null): Promise<GamePlatformClient | null> {
   if (!provider) return null;
   const meta = providerMeta(provider);
-  if (!meta || meta.style !== "JUWA") return null;
+  if (!meta) return null;
   const cfg = await resolvePlatformConfig(provider);
   if (!cfg) return null;
-  return new JuwaClient({ baseUrl: cfg.baseUrl, agentId: cfg.agentId, secretKey: cfg.secret, balanceDivisor: cfg.balanceDivisor });
+  const base = { baseUrl: cfg.baseUrl, agentId: cfg.agentId, secretKey: cfg.secret, balanceDivisor: cfg.balanceDivisor };
+  if (meta.style === "JUWA") return new JuwaClient(base);
+  if (meta.style === "CASHFRENZY") return new CashFrenzyClient(base);
+  return null;
 }
 
 const CHARS = "abcdefghijkmnpqrstuvwxyz23456789"; // no look-alikes (l/1/o/0)
