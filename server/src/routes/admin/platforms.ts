@@ -26,7 +26,7 @@ adminPlatformsRouter.get("/", async (_req, res) => {
         idLabel: p.idLabel,
         secretLabel: p.secretLabel,
         showDivisor: p.showDivisor,
-        baseUrl: row?.baseUrl || "",
+        baseUrl: row?.baseUrl || p.defaultBaseUrl || "",
         agentId: row?.agentId || "",
         hasSecret: !!(row?.secret || "").length,
         balanceDivisor: row ? Number(row.balanceDivisor) : 1,

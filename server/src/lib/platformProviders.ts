@@ -19,13 +19,15 @@ export interface ProviderMeta {
   idLabel: string;
   secretLabel: string;
   showDivisor: boolean;
+  // Known API base URL, pre-filled in the admin form (still editable in case it changes).
+  defaultBaseUrl?: string;
 }
 
 export const PROVIDERS: ProviderMeta[] = [
   { key: "JUWA", label: "Juwa", style: "JUWA", idLabel: "Agent ID", secretLabel: "Secret Key", showDivisor: true },
-  { key: "JUWA2", label: "Juwa 2.0", style: "JUWA", idLabel: "Agent ID", secretLabel: "Secret Key", showDivisor: true },
-  { key: "GAMEVAULT", label: "Game Vault", style: "JUWA", idLabel: "Agent ID", secretLabel: "Secret Key", showDivisor: true },
-  { key: "CASHFRENZY", label: "Cash Frenzy", style: "CASHFRENZY", idLabel: "Agent Username", secretLabel: "Agent Password", showDivisor: false },
+  { key: "JUWA2", label: "Juwa 2.0", style: "JUWA", idLabel: "Agent ID", secretLabel: "Secret Key", showDivisor: true, defaultBaseUrl: "https://apiinterface.juwa2.xin" },
+  { key: "GAMEVAULT", label: "Game Vault", style: "JUWA", idLabel: "Agent ID", secretLabel: "Secret Key", showDivisor: true, defaultBaseUrl: "https://apius.gamevault999.com" },
+  { key: "CASHFRENZY", label: "Cash Frenzy", style: "CASHFRENZY", idLabel: "Agent Username", secretLabel: "Agent Password", showDivisor: false, defaultBaseUrl: "https://agentserver.cashfrenzy777.com" },
 ];
 
 export function providerMeta(key: string): ProviderMeta | undefined {
