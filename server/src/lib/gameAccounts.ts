@@ -101,6 +101,9 @@ async function debitWallet(tx: Tx, userId: string, amount: number) {
     data: { balance: { decrement: amount } },
   });
   if (res.count === 0) throw new GameError(400, "Not enough balance in your wallet. Deposit first, then try again.");
+  // A game load spends locked (non-withdrawable) money first; clamp so withdrawable never exceeds
+  // what's left in the balance. Any clean money loaded this way comes back withdrawable on redeem.
+  await tx.$executeRaw`UPDATE "Wallet" SET "withdrawable" = "balance" WHERE "userId" = ${userId} AND "withdrawable" > "balance"`;
 }
 
 /** Holds wallet money for a load and creates the request that the agent will complete. */
@@ -456,7 +459,8 @@ function completeInTx(requestId: string, actor: Actor, input: CompleteInput) {
           },
         });
         await tx.gameRequest.update({ where: { id: request.id }, data: { transactionId: t.id } });
-        await tx.wallet.update({ where: { userId: request.userId }, data: { balance: { increment: redeemedAmount } } });
+        // Money coming back from a game has been played through, so it's directly cashable.
+        await tx.wallet.update({ where: { userId: request.userId }, data: { balance: { increment: redeemedAmount }, withdrawable: { increment: redeemedAmount } } });
         await tx.userGame.update({
           where: { id: ug.id },
           // Whatever stays in the game re-tiers as the new load basis for the next withdrawal.

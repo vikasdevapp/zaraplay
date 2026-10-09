@@ -18,7 +18,7 @@ interface UserDetail {
   signupIp: string;
   blockedAt: string | null;
   blockedReason: string | null;
-  wallet: { balance: string; freePlay: string; totalDeposited: string; lastDepositAmount: string } | null;
+  wallet: { balance: string; withdrawable: string; totalDeposited: string; lastDepositAmount: string } | null;
   games: { id: string; gameUsername: string | null; gamePassword: string | null; balance: string; game: { name: string } }[];
   transactions: { id: string; type: string; amount: string; status: string; adminNote: string | null; createdAt: string }[];
 }
@@ -107,7 +107,7 @@ export default function AdminUserDetailPage() {
   const [user, setUser] = useState<UserDetail | null>(null);
   const [amount, setAmount] = useState("");
   const [reason, setReason] = useState("");
-  const [bucket, setBucket] = useState<"balance" | "freePlay">("balance");
+  const [bucket, setBucket] = useState<"balance" | "withdrawable">("balance");
   const [message, setMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [warnMsg, setWarnMsg] = useState("");
@@ -207,8 +207,8 @@ export default function AdminUserDetailPage() {
           <p className="text-2xl font-extrabold text-primary">${Number(user.wallet?.balance ?? 0).toFixed(2)}</p>
         </div>
         <div className="card">
-          <p className="text-muted text-xs mb-1">Free Play</p>
-          <p className="text-2xl font-extrabold">{Number(user.wallet?.freePlay ?? 0).toFixed(2)} FP</p>
+          <p className="text-muted text-xs mb-1">Withdrawable</p>
+          <p className="text-2xl font-extrabold text-gold">${Number(user.wallet?.withdrawable ?? 0).toFixed(2)}</p>
         </div>
         <div className="card">
           <p className="text-muted text-xs mb-1">Total Deposited</p>
@@ -228,9 +228,9 @@ export default function AdminUserDetailPage() {
             onChange={(e) => setAmount(e.target.value)}
             required
           />
-          <select className="input sm:w-40" value={bucket} onChange={(e) => setBucket(e.target.value as "balance" | "freePlay")}>
-            <option value="balance">Balance</option>
-            <option value="freePlay">Free Play</option>
+          <select className="input sm:w-40" value={bucket} onChange={(e) => setBucket(e.target.value as "balance" | "withdrawable")}>
+            <option value="balance">Balance (locked)</option>
+            <option value="withdrawable">Withdrawable</option>
           </select>
         </div>
         <input className="input" placeholder="Reason (required, shown in transaction history)" value={reason} onChange={(e) => setReason(e.target.value)} required />

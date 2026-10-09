@@ -57,7 +57,9 @@ authRouter.post("/signup", limitSignupsByIp, async (req, res) => {
   }
 
   const settings = await getPlatformSettings();
-  const freeplayGrant = Number(settings.freeplaySignupGrant);
+  // Signup bonus is now real (playable) balance, not Free Play. It's locked for direct cashout —
+  // it must be loaded into a game and played through before it can be withdrawn.
+  const signupBonus = Number(settings.freeplaySignupGrant);
   const ip = getClientIp(req);
   const passwordHash = await bcrypt.hash(password, 10);
 
@@ -73,8 +75,8 @@ authRouter.post("/signup", limitSignupsByIp, async (req, res) => {
         referralCode: referralCode(),
         referredById,
         phoneVerified: false,
-        wallet: { create: { freePlay: freeplayGrant } },
-        transactions: { create: { type: "FREEPLAY_GRANT", amount: freeplayGrant, status: "COMPLETED" } },
+        wallet: { create: { balance: signupBonus } },
+        transactions: { create: { type: "SIGNUP_BONUS", amount: signupBonus, status: "COMPLETED", adminNote: "Signup bonus" } },
       },
       include: { wallet: true },
     });

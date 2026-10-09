@@ -11,7 +11,7 @@ import { ApiError } from "@/lib/api";
 
 interface Wallet {
   balance: string;
-  freePlay: string;
+  withdrawable: string;
   totalDeposited: string;
 }
 
@@ -306,7 +306,14 @@ function WalletContent() {
         <div className="card">
           <p className="text-muted text-sm">Wallet Balance</p>
           <p className="text-4xl font-extrabold text-primary mb-1">${Number(wallet?.balance ?? 0).toFixed(2)}</p>
-          <p className="text-sm text-muted">Free Play: {Number(wallet?.freePlay ?? 0).toFixed(2)} FP</p>
+          <div className="mt-2 flex items-center justify-between rounded-xl bg-surface2 px-3 py-2">
+            <span className="text-sm text-muted">Withdrawable</span>
+            <span className="text-sm font-semibold text-gold">${Number(wallet?.withdrawable ?? 0).toFixed(2)}</span>
+          </div>
+          <p className="text-xs text-muted mt-2">
+            Load your balance into a game, play, then Withdraw Credits — that amount becomes withdrawable and can be cashed out.
+            Deposits and bonuses aren&apos;t cashable until they&apos;ve been played through a game.
+          </p>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -490,7 +497,16 @@ function WalletContent() {
               </div>
             )}
             <label className="block text-sm font-medium">
-              Amount to withdraw
+              <span className="flex items-center justify-between">
+                Amount to withdraw
+                <button
+                  type="button"
+                  className="text-xs text-primary font-medium"
+                  onClick={() => setCashoutAmount(Number(wallet?.withdrawable ?? 0).toFixed(2))}
+                >
+                  Max ${Number(wallet?.withdrawable ?? 0).toFixed(2)}
+                </button>
+              </span>
               <input
                 className="input mt-1"
                 type="number"
@@ -502,7 +518,10 @@ function WalletContent() {
                 required
               />
             </label>
-            <button type="submit" className="btn-gold w-full" disabled={busy === "cashout"}>
+            <p className="text-xs text-muted">
+              Only your withdrawable balance (${Number(wallet?.withdrawable ?? 0).toFixed(2)}) can be cashed out — that&apos;s the money you&apos;ve already played through a game.
+            </p>
+            <button type="submit" className="btn-gold w-full" disabled={busy === "cashout" || Number(wallet?.withdrawable ?? 0) <= 0}>
               {busy === "cashout" ? "Processing…" : "Cashout"}
             </button>
           </form>

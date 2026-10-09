@@ -18,7 +18,6 @@ const NAV_ITEMS = [
   { href: "/admin/platforms", label: "Game Platforms", icon: "🔌" },
   { href: "/admin/users", label: "Users", icon: "👥" },
   { href: "/admin/vip-tiers", label: "VIP Tiers", icon: "🏆" },
-  { href: "/admin/marketplace", label: "Marketplace", icon: "🛍️" },
   { href: "/admin/roulette", label: "Roulette Wheel", icon: "🎡" },
   { href: "/admin/agent-team", label: "Agent Team", icon: "🧑‍🔧" },
   { href: "/agent", label: "Agent Desk", icon: "📥" },

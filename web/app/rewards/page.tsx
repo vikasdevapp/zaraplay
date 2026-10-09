@@ -3,7 +3,6 @@
 import { useEffect, useState, useCallback } from "react";
 import AppShell from "@/components/AppShell";
 import { useApi, useAuth } from "@/context/AuthContext";
-import { ApiError } from "@/lib/api";
 import RouletteWheel from "@/components/RouletteWheel";
 
 interface ReferralData {
@@ -30,37 +29,22 @@ interface VipStatus {
   referralCount: number;
 }
 
-interface MarketplaceItem {
-  id: string;
-  name: string;
-  category: string;
-  fpCost: string;
-  cashValue: string;
-}
-
 export default function RewardsPage() {
   const api = useApi();
   const { user } = useAuth();
   const [data, setData] = useState<ReferralData | null>(null);
   const [copied, setCopied] = useState(false);
   const [vip, setVip] = useState<VipStatus | null>(null);
-  const [items, setItems] = useState<MarketplaceItem[]>([]);
-  const [freePlay, setFreePlay] = useState(0);
-  const [message, setMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
 
+  // Roulette prizes land in the wallet; re-fetching the wallet keeps balances fresh elsewhere.
   const loadWallet = useCallback(() => {
-    api<{ wallet: { freePlay: string } }>("/api/wallet")
-      .then((res) => setFreePlay(Number(res.wallet.freePlay)))
-      .catch(() => {});
+    api("/api/wallet").catch(() => {});
   }, [api]);
 
   useEffect(() => {
     api<ReferralData>("/api/referral").then(setData).catch(() => {});
     api<VipStatus>("/api/vip").then(setVip).catch(() => {});
-    api<{ items: MarketplaceItem[] }>("/api/marketplace/items").then((res) => setItems(res.items)).catch(() => {});
-    loadWallet();
-  }, [api, loadWallet]);
+  }, [api]);
 
   const referralLink = data ? `${typeof window !== "undefined" ? window.location.origin : ""}/signup?ref=${data.referralCode}` : "";
 
@@ -70,20 +54,6 @@ export default function RewardsPage() {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     });
-  }
-
-  async function redeem(itemId: string) {
-    setMessage(null);
-    setBusyId(itemId);
-    try {
-      const res = await api<{ note: string }>(`/api/marketplace/redeem/${itemId}`, { method: "POST" });
-      setMessage({ type: "success", text: res.note });
-      loadWallet();
-    } catch (err) {
-      setMessage({ type: "error", text: err instanceof ApiError ? err.message : "Redemption failed." });
-    } finally {
-      setBusyId(null);
-    }
   }
 
   return (
@@ -143,33 +113,6 @@ export default function RewardsPage() {
               <p className="text-2xl font-bold text-primary">${Number(data?.totalEarned ?? 0).toFixed(2)}</p>
               <p className="text-xs text-muted">Earned from referrals</p>
             </div>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="flex items-center justify-between mb-1">
-            <h2 className="font-bold">🛍️ Marketplace</h2>
-            <span className="text-sm text-primary font-medium">{freePlay.toFixed(0)} FP</span>
-          </div>
-          <p className="text-sm text-muted mb-3">Trade free play for real cash — credited to your balance instantly.</p>
-          {message && <p className={`text-sm mb-2 ${message.type === "error" ? "text-red-400" : "text-green-400"}`}>{message.text}</p>}
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-            {items.map((it) => (
-              <div key={it.id} className="bg-surface2 rounded-lg p-3 text-center">
-                <p className="text-sm font-medium">{it.name}</p>
-                <p className="text-xs text-muted mb-2">
-                  {Number(it.fpCost).toFixed(0)} FP → ${Number(it.cashValue).toFixed(2)}
-                </p>
-                <button
-                  onClick={() => redeem(it.id)}
-                  disabled={busyId === it.id || freePlay < Number(it.fpCost)}
-                  className="btn-primary text-xs py-1.5 px-2 w-full disabled:opacity-40"
-                >
-                  {busyId === it.id ? "Redeeming…" : "Redeem"}
-                </button>
-              </div>
-            ))}
-            {items.length === 0 && <p className="text-muted text-sm col-span-full text-center py-4">No items available.</p>}
           </div>
         </div>
 

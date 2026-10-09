@@ -9,7 +9,7 @@ import { useAuth, useApi } from "@/context/AuthContext";
 
 interface Wallet {
   balance: string;
-  freePlay: string;
+  withdrawable: string;
   totalDeposited: string;
 }
 
@@ -70,7 +70,7 @@ export default function DashboardPage() {
             {showBalance ? `$${Number(wallet?.balance ?? 0).toFixed(2)}` : "••••"}
           </p>
           <p className="text-sm text-muted mt-2">
-            Free Play: <span className="text-white font-medium">{Number(wallet?.freePlay ?? 0).toFixed(2)} FP</span>
+            Withdrawable: <span className="text-gold font-medium">{showBalance ? `$${Number(wallet?.withdrawable ?? 0).toFixed(2)}` : "••••"}</span>
           </p>
         </div>
 
@@ -98,7 +98,7 @@ export default function DashboardPage() {
           ) : (
             <Link href="/verify-phone" className="card block hover:border-primary transition-colors">
               <p className="font-semibold mb-1">📱 Verify your number</p>
-              <p className="text-sm text-muted">Get free play after phone verification.</p>
+              <p className="text-sm text-muted">Get a bonus credited after phone verification.</p>
             </Link>
           )}
           <div className="card">

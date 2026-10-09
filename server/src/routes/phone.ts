@@ -81,9 +81,10 @@ phoneRouter.post("/verify", async (req: AuthedRequest, res) => {
   });
 
   if (bonus > 0) {
-    await prisma.wallet.update({ where: { userId: req.userId! }, data: { freePlay: { increment: bonus } } });
+    // Real (playable) balance, locked for direct cashout until played through a game.
+    await prisma.wallet.update({ where: { userId: req.userId! }, data: { balance: { increment: bonus } } });
     await prisma.transaction.create({
-      data: { userId: req.userId!, type: "FREEPLAY_GRANT", amount: bonus, status: "COMPLETED", adminNote: "Phone verification bonus" },
+      data: { userId: req.userId!, type: "SIGNUP_BONUS", amount: bonus, status: "COMPLETED", adminNote: "Phone verification bonus" },
     });
   }
 

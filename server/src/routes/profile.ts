@@ -111,11 +111,11 @@ profileRouter.post("/verify-phone", async (req: AuthedRequest, res) => {
   });
   await prisma.wallet.update({
     where: { userId: req.userId! },
-    data: { freePlay: { increment: 5 } },
+    data: { balance: { increment: 5 } },
   });
   await prisma.transaction.create({
-    data: { userId: req.userId!, type: "FREEPLAY_GRANT", amount: 5, status: "COMPLETED", meta: { reason: "phone_verification" } },
+    data: { userId: req.userId!, type: "SIGNUP_BONUS", amount: 5, status: "COMPLETED", adminNote: "Phone verification bonus", meta: { reason: "phone_verification" } },
   });
-  res.json({ user, freePlayGranted: 5 });
+  res.json({ user, bonusGranted: 5 });
 });
 

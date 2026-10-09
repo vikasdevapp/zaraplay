@@ -13,7 +13,7 @@ interface AdminUser {
   role: string;
   phoneVerified: boolean;
   createdAt: string;
-  wallet: { balance: string; freePlay: string; totalDeposited: string } | null;
+  wallet: { balance: string; withdrawable: string; totalDeposited: string } | null;
 }
 
 export default function AdminUsersPage() {
@@ -56,7 +56,7 @@ export default function AdminUsersPage() {
               <th className="px-4 py-3">Name</th>
               <th className="px-4 py-3">Username</th>
               <th className="px-4 py-3">Balance</th>
-              <th className="px-4 py-3">Free Play</th>
+              <th className="px-4 py-3">Withdrawable</th>
               <th className="px-4 py-3">Deposited</th>
               <th className="px-4 py-3">Joined</th>
             </tr>
@@ -72,7 +72,7 @@ export default function AdminUsersPage() {
                 </td>
                 <td className="px-4 py-3 text-muted">@{u.username}</td>
                 <td className="px-4 py-3">${Number(u.wallet?.balance ?? 0).toFixed(2)}</td>
-                <td className="px-4 py-3">{Number(u.wallet?.freePlay ?? 0).toFixed(2)} FP</td>
+                <td className="px-4 py-3 text-gold">${Number(u.wallet?.withdrawable ?? 0).toFixed(2)}</td>
                 <td className="px-4 py-3">${Number(u.wallet?.totalDeposited ?? 0).toFixed(2)}</td>
                 <td className="px-4 py-3 text-muted">{new Date(u.createdAt).toLocaleDateString()}</td>
               </tr>

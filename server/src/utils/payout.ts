@@ -34,10 +34,11 @@ export async function refundCashout(
     });
     if (claimed.count === 0) return null;
 
-    const fromFreePlay = (transaction.meta as { fromFreePlay?: boolean } | null)?.fromFreePlay ?? false;
+    // The hold removed the amount from both balance and withdrawable (it was played-through money),
+    // so a refund restores both.
     await tx.wallet.update({
       where: { userId: transaction.userId },
-      data: fromFreePlay ? { freePlay: { increment: transaction.amount } } : { balance: { increment: transaction.amount } },
+      data: { balance: { increment: transaction.amount }, withdrawable: { increment: transaction.amount } },
     });
     return tx.transaction.findUnique({ where: { id: transactionId } });
   });

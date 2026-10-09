@@ -197,6 +197,11 @@ model Wallet {
   userId              String   @unique
   user                User     @relation(fields: [userId], references: [id])
   balance             Decimal  @default(0) @db.Decimal(12, 2)
+  // The portion of `balance` that has been played through a game (came back via Withdraw
+  // Credits) and is therefore directly cashable to a bank. Deposits/bonuses are NOT withdrawable
+  // until loaded into a game and redeemed; invariant: 0 <= withdrawable <= balance.
+  withdrawable        Decimal  @default(0) @db.Decimal(12, 2)
+  // Legacy promo bucket, retired with the Free Play system — kept at 0, no longer credited/spent.
   freePlay            Decimal  @default(0) @db.Decimal(12, 2)
   totalDeposited      Decimal  @default(0) @db.Decimal(12, 2)
   lastDepositAmount   Decimal  @default(0) @db.Decimal(12, 2)

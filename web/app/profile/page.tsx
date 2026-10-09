@@ -88,7 +88,7 @@ export default function ProfilePage() {
   async function verifyPhone() {
     try {
       await api("/api/profile/verify-phone", { method: "POST" });
-      setMessage({ type: "success", text: "Phone verified — $5 free play added!" });
+      setMessage({ type: "success", text: "Phone verified — $5 bonus added to your balance!" });
       setProfile((p) => (p ? { ...p, phoneVerified: true } : p));
     } catch (err) {
       setMessage({ type: "error", text: err instanceof ApiError ? err.message : "Verification failed." });

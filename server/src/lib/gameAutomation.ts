@@ -321,7 +321,8 @@ export async function autoWithdrawFromGame(userId: string, userGameId: string, r
     const req = await tx.gameRequest.create({
       data: { userId, userGameId: ug.id, type: "REDEEM", amount: requested, status: "COMPLETED", completedAmount: s.payout, completedAt: new Date(), transactionId: t.id, agentNote: note },
     });
-    if (s.payout > 0) await tx.wallet.update({ where: { userId }, data: { balance: { increment: s.payout } } });
+    // Money coming back from a game has been played through, so it's directly cashable.
+    if (s.payout > 0) await tx.wallet.update({ where: { userId }, data: { balance: { increment: s.payout }, withdrawable: { increment: s.payout } } });
     await tx.userGame.update({
       where: { id: ug.id },
       // Whatever stays in the game re-tiers as the new load basis for the next withdrawal.

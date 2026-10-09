@@ -35,7 +35,7 @@ adminUsersRouter.get("/", async (req, res) => {
       phoneVerified: true,
       blockedAt: true,
       createdAt: true,
-      wallet: { select: { balance: true, freePlay: true, totalDeposited: true } },
+      wallet: { select: { balance: true, withdrawable: true, totalDeposited: true } },
     },
   });
   res.json({ users });
@@ -103,7 +103,9 @@ adminUsersRouter.post("/:id/unblock", async (req: AuthedRequest, res) => {
 const adjustSchema = z.object({
   amount: z.number().refine((n) => n !== 0, "Amount can't be zero."),
   reason: z.string().min(1).max(200),
-  bucket: z.enum(["balance", "freePlay"]).default("balance"),
+  // "balance" = playable, locked until played through a game. "withdrawable" = directly cashable
+  // (also raises balance, since withdrawable can never exceed balance).
+  bucket: z.enum(["balance", "withdrawable"]).default("balance"),
 });
 
 adminUsersRouter.post("/:id/adjust-balance", async (req: AuthedRequest, res) => {
@@ -114,16 +116,20 @@ adminUsersRouter.post("/:id/adjust-balance", async (req: AuthedRequest, res) => 
   const wallet = await prisma.wallet.findUnique({ where: { userId: req.params.id } });
   if (!wallet) return res.status(404).json({ error: "User wallet not found." });
 
-  const current = bucket === "balance" ? Number(wallet.balance) : Number(wallet.freePlay);
+  const current = bucket === "balance" ? Number(wallet.balance) : Number(wallet.withdrawable);
   if (current + amount < 0) {
     return res.status(400).json({ error: "Adjustment would make the balance negative." });
   }
 
   const result = await prisma.$transaction(async (tx) => {
-    const w = await tx.wallet.update({
+    await tx.wallet.update({
       where: { userId: req.params.id },
-      data: bucket === "balance" ? { balance: { increment: amount } } : { freePlay: { increment: amount } },
+      // Withdrawable money is also balance, so a withdrawable adjustment moves both together.
+      data: bucket === "balance" ? { balance: { increment: amount } } : { balance: { increment: amount }, withdrawable: { increment: amount } },
     });
+    // Keep the invariant withdrawable <= balance (a balance reduction may push it below withdrawable).
+    await tx.$executeRaw`UPDATE "Wallet" SET "withdrawable" = "balance" WHERE "userId" = ${req.params.id} AND "withdrawable" > "balance"`;
+    const w = await tx.wallet.findUniqueOrThrow({ where: { userId: req.params.id } });
     const transaction = await tx.transaction.create({
       data: {
         userId: req.params.id,

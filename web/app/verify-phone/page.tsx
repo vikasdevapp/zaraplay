@@ -52,7 +52,7 @@ export default function VerifyPhonePage() {
       <div className="max-w-sm mx-auto">
         <div className="card">
           <h1 className="text-xl font-bold mb-1">📱 Verify your number</h1>
-          <p className="text-sm text-muted mb-4">Get free play credited after verification.</p>
+          <p className="text-sm text-muted mb-4">Get a bonus credited to your balance after verification.</p>
 
           {step === "phone" && (
             <form onSubmit={handlePhoneSubmit} className="space-y-3">

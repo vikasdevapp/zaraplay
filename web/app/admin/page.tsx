@@ -12,7 +12,7 @@ interface Stats {
   totalDeposited: string;
   totalPaidOut: string;
   walletLiability: string;
-  freePlayLiability: string;
+  withdrawableLiability: string;
 }
 
 interface GatewayStatus {
@@ -44,7 +44,7 @@ export default function AdminDashboardPage() {
         { label: "Total Deposited", value: `$${Number(stats.totalDeposited).toFixed(2)}`, isCurrency: true },
         { label: "Total Paid Out", value: `$${Number(stats.totalPaidOut).toFixed(2)}`, isCurrency: true },
         { label: "Wallet Liability", value: `$${Number(stats.walletLiability).toFixed(2)}`, isCurrency: true },
-        { label: "Free Play Liability", value: `$${Number(stats.freePlayLiability).toFixed(2)}`, isCurrency: true },
+        { label: "Withdrawable Liability", value: `$${Number(stats.withdrawableLiability).toFixed(2)}`, isCurrency: true },
       ]
     : [];
 

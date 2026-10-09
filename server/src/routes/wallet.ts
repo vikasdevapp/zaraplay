@@ -3,7 +3,6 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { calcDepositBonus } from "../utils/bonus";
-import { evaluateCashout } from "../utils/cashout";
 import { getPlatformSettings } from "../lib/settings";
 import { createPayOrder, gateway, GatewayError, publicIpv4 } from "../lib/ggusonepay";
 import { PROVIDER, syncDeposit } from "../lib/paymentSync";
@@ -238,7 +237,6 @@ walletRouter.post("/deposit/:id/refresh", async (req: AuthedRequest, res) => {
 
 const cashoutSchema = z.object({
   amount: z.number().positive(),
-  fromFreePlay: z.boolean().optional().default(false),
   // A saved payout method (see /payout-methods); required whenever payout methods are offered.
   payoutMethodId: z.string().max(40).optional(),
 });
@@ -378,7 +376,7 @@ walletRouter.delete("/payout-methods/:id", async (req: AuthedRequest, res) => {
 walletRouter.post("/cashout", async (req: AuthedRequest, res) => {
   const parsed = cashoutSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid cashout amount." });
-  const { amount, fromFreePlay, payoutMethodId } = parsed.data;
+  const { amount, payoutMethodId } = parsed.data;
 
   // Snapshot of the chosen saved method: display-safe details in meta, and (card only) the
   // sealed card number, which the admin's approval hands to the gateway.
@@ -405,25 +403,35 @@ walletRouter.post("/cashout", async (req: AuthedRequest, res) => {
   const wallet = await prisma.wallet.findUnique({ where: { userId: req.userId! } });
   if (!wallet) return res.status(404).json({ error: "Wallet not found." });
 
-  const available = fromFreePlay ? Number(wallet.freePlay) : Number(wallet.balance);
-  if (amount > available) {
-    return res.status(400).json({ error: "Cashout amount exceeds available balance." });
-  }
-
   const settings = await getPlatformSettings();
-  const evaluation = evaluateCashout(amount, Number(wallet.lastDepositAmount), fromFreePlay, settings);
-  if (!evaluation.eligible) {
-    return res.status(400).json({ error: evaluation.reason });
+  const withdrawable = Number(wallet.withdrawable);
+
+  // Only money that has been played through a game (loaded into a game, then withdrawn under the
+  // cashout rules) is directly cashable. Deposits/bonuses sit in the balance until then.
+  if (withdrawable <= 0) {
+    return res.status(400).json({
+      error: "You don't have any withdrawable balance yet. Load your balance into a game, play, then Withdraw Credits — that amount becomes cashable.",
+    });
+  }
+  if (amount > withdrawable) {
+    return res.status(400).json({ error: `You can cash out up to $${withdrawable.toFixed(2)} (your played-through balance).` });
+  }
+  const minWithdrawal = Number(settings.minWithdrawal);
+  if (amount < minWithdrawal) {
+    return res.status(400).json({ error: `Minimum cashout is $${minWithdrawal.toFixed(2)}.` });
+  }
+  const maxWithdrawal = Number(settings.maxWithdrawal);
+  if (maxWithdrawal > 0 && amount > maxWithdrawal) {
+    return res.status(400).json({ error: `Maximum cashout is $${maxWithdrawal.toFixed(2)}.` });
   }
 
-  // The full requested amount is held immediately (payout + forfeited both leave the
-  // spendable balance) so the same funds can't be cashed out twice while pending review.
-  // Approval just finalizes the hold; rejection refunds it.
-  // Conditional decrement: two simultaneous cashouts can't both pass the balance check above.
+  // The requested amount is held immediately (removed from both balance and withdrawable) so the
+  // same funds can't be cashed out twice while pending review. Approval finalizes it; rejection
+  // refunds it. The conditional decrement means two simultaneous cashouts can't both pass.
   const result = await prisma.$transaction(async (tx) => {
     const held = await tx.wallet.updateMany({
-      where: fromFreePlay ? { userId: req.userId!, freePlay: { gte: amount } } : { userId: req.userId!, balance: { gte: amount } },
-      data: fromFreePlay ? { freePlay: { decrement: amount } } : { balance: { decrement: amount } },
+      where: { userId: req.userId!, withdrawable: { gte: amount } },
+      data: { balance: { decrement: amount }, withdrawable: { decrement: amount } },
     });
     if (!held.count) return null;
     const w = await tx.wallet.findUniqueOrThrow({ where: { userId: req.userId! } });
@@ -433,25 +441,21 @@ walletRouter.post("/cashout", async (req: AuthedRequest, res) => {
         type: "CASHOUT",
         amount,
         status: "PENDING",
-        payoutAmount: evaluation.payout,
-        forfeitedAmount: evaluation.forfeited,
-        meta: payoutMeta ? { fromFreePlay, payout: payoutMeta } : { fromFreePlay },
+        payoutAmount: amount,
+        forfeitedAmount: 0,
+        meta: payoutMeta ? { payout: payoutMeta } : {},
         payoutSecret,
       },
     });
     return { wallet: w, transaction };
   });
-  if (!result) return res.status(400).json({ error: "Cashout amount exceeds available balance." });
+  if (!result) return res.status(400).json({ error: `You can cash out up to $${withdrawable.toFixed(2)} (your played-through balance).` });
 
   res.json({
     wallet: result.wallet,
     transaction: result.transaction,
-    payout: evaluation.payout,
-    forfeited: evaluation.forfeited,
-    note:
-      "Your cashout request is pending admin approval." +
-      (evaluation.forfeited > 0
-        ? " You requested more than your max cashout for this tier — the excess will be forfeited."
-        : ""),
+    payout: amount,
+    forfeited: 0,
+    note: "Your cashout request is pending admin approval.",
   });
 });
