@@ -173,6 +173,13 @@ export interface PayOrder {
   errMsg?: string | null;
 }
 
+// Slow-settling channels (e.g. Chime) need a longer payment window so a late settlement still
+// lands on an open order instead of an expired/closed one. Capped at the gateway's 24h max.
+const PAY_EXPIRE_SECONDS: Record<string, number> = { chime: 2 * 3600 };
+export function payExpireSeconds(wayCode: string) {
+  return Math.min(86400, Math.max(config.orderExpireSeconds, PAY_EXPIRE_SECONDS[wayCode] || 0));
+}
+
 export function createPayOrder(input: {
   mchOrderNo: string;
   amount: number;
@@ -189,7 +196,7 @@ export function createPayOrder(input: {
     clientIp: input.clientIp,
     notifyUrl: `${config.apiPublicUrl}/api/payments/ggusonepay/notify/pay`,
     returnUrl: config.webPublicUrl ? `${config.webPublicUrl}/wallet` : undefined,
-    expiredTime: config.orderExpireSeconds,
+    expiredTime: payExpireSeconds(input.wayCode),
     extParam: config.sandboxAutoResult || undefined,
     wayParam: { clientId: input.userId, deviceId: input.deviceId },
   });

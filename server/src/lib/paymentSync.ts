@@ -15,6 +15,14 @@ type TxRow = Omit<Transaction, "payoutSecret">;
 
 const money = (v: Prisma.Decimal | number | null) => `$${Number(v ?? 0).toFixed(2)}`;
 
+// Minutes to wait past an order's expiry before closing it at the gateway and giving up. Slow
+// channels settle late, so they wait much longer than the default.
+const CLOSE_GRACE_MINUTES: Record<string, number> = { chime: 45 };
+const DEFAULT_CLOSE_GRACE_MINUTES = 15;
+function closeGraceMs(wayCode?: string) {
+  return ((wayCode && CLOSE_GRACE_MINUTES[wayCode]) || DEFAULT_CLOSE_GRACE_MINUTES) * 60_000;
+}
+
 function notify(userId: string, title: string, body: string) {
   notifyUser(userId, { title, body, kind: "WALLET", link: "/wallet" }).catch((err) => console.error("[ggusonepay] notify failed", err));
 }
@@ -96,12 +104,14 @@ export async function syncDeposit(transaction: TxRow, opts: { closeIfExpired?: b
     return (await prisma.transaction.findUnique({ where: { id: transaction.id } }))!;
   }
 
-  const meta = (transaction.meta as { expireTimestamp?: number } | null) || {};
+  const meta = (transaction.meta as { expireTimestamp?: number; wayCode?: string } | null) || {};
 
   // Past expiry and still unpaid: close it at the gateway so a late payment can't land on an
-  // order we've given up on, then re-read the final state.
+  // order we've given up on, then re-read the final state. Slow-settling channels (e.g. Chime)
+  // get a much longer grace so a late settlement still has time to show up as paid before we give
+  // up and reject — this is what used to wrongly reject paid Chime deposits.
   const unpaid = order.state === ORDER_STATE.CREATED || order.state === ORDER_STATE.IN_PROGRESS;
-  if (opts.closeIfExpired && unpaid && meta.expireTimestamp && Date.now() > meta.expireTimestamp + 5 * 60_000) {
+  if (opts.closeIfExpired && unpaid && meta.expireTimestamp && Date.now() > meta.expireTimestamp + closeGraceMs(meta.wayCode)) {
     await closePayOrder(transaction.id);
     order = await queryPayOrder(transaction.id);
   }
