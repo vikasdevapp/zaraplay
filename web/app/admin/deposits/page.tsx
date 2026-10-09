@@ -140,6 +140,14 @@ export default function AdminDepositsPage() {
                   Check status
                 </button>
               )}
+              {/* A rejected gateway deposit the customer may actually have paid (e.g. the order was
+                  closed at expiry while a slow payment settled): re-check and credit it if the
+                  gateway now shows the money arrived. */}
+              {tab === "REJECTED" && d.gatewayProvider && (
+                <button onClick={() => sync(d.id)} disabled={busyId === d.id} className="btn-primary text-sm py-2 px-3">
+                  Recheck &amp; recover
+                </button>
+              )}
               {tab === "PENDING" && (
                 <div className="flex gap-2">
                   {d.gatewayProvider && (
