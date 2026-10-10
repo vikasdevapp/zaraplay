@@ -40,7 +40,8 @@ export default function AdminDepositsPage() {
     load(tab).catch(() => {});
   }, [tab, load]);
 
-  async function approve(id: string) {
+  async function approve(id: string, confirmText?: string) {
+    if (confirmText && !window.confirm(confirmText)) return;
     setError(null);
     setBusyId(id);
     try {
@@ -155,10 +156,26 @@ export default function AdminDepositsPage() {
                       Check status
                     </button>
                   )}
-                  {/* Gateway deposits credit themselves once paid; manual approval is only for settling a mismatched amount. */}
+                  {/* Non-gateway, or a gateway mismatch the gateway already reported as paid. */}
                   {(!d.gatewayProvider || d.meta?.amountMismatch) && (
                     <button onClick={() => approve(d.id)} disabled={busyId === d.id} className="btn-primary text-sm py-2 px-3">
                       {d.gatewayProvider && d.meta?.paidCents !== undefined ? `Approve $${(d.meta.paidCents / 100).toFixed(2)}` : "Approve"}
+                    </button>
+                  )}
+                  {/* Handle-based gateway methods (e.g. Chime) the gateway can't auto-confirm: credit
+                      by hand after verifying the money arrived in the merchant account. */}
+                  {d.gatewayProvider && !d.meta?.amountMismatch && (
+                    <button
+                      onClick={() =>
+                        approve(
+                          d.id,
+                          `Only approve if you've confirmed $${Number(d.amount).toFixed(2)} from ${d.user.fullName} arrived in your ${d.meta?.wayCode || "gateway"} account. Credit it now?`
+                        )
+                      }
+                      disabled={busyId === d.id}
+                      className="btn-primary text-sm py-2 px-3"
+                    >
+                      Mark paid
                     </button>
                   )}
                   <button onClick={() => reject(d.id)} disabled={busyId === d.id} className="btn-ghost text-sm py-2 px-3 text-red-400">

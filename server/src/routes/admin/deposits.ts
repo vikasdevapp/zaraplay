@@ -26,29 +26,48 @@ adminDepositsRouter.get("/", async (req, res) => {
 });
 
 adminDepositsRouter.post("/:id/approve", async (req: AuthedRequest, res) => {
-  const transaction = await prisma.transaction.findUnique({ where: { id: req.params.id } });
+  let transaction = await prisma.transaction.findUnique({ where: { id: req.params.id } });
   if (!transaction || transaction.type !== "DEPOSIT") return res.status(404).json({ error: "Deposit request not found." });
   if (transaction.status !== "PENDING") return res.status(409).json({ error: `This request is already ${transaction.status.toLowerCase()}.` });
 
-  // Gateway deposits credit themselves when the gateway confirms payment; approving one by hand
-  // is only for settling an amount mismatch the gateway already reported as paid.
   const meta = (transaction.meta as { amountMismatch?: boolean; paidCents?: number; bonusPercent?: number } | null) || {};
-  if (transaction.gatewayProvider && !meta.amountMismatch) {
-    return res.status(409).json({ error: "This deposit is paid through the gateway. Use Check status instead." });
-  }
+  let manualGatewayApproval = false;
 
-  // Older rows parked as a mismatch (before paid deposits were auto-credited) settle at what the
-  // gateway says was actually paid, with the bonus worked out on that amount.
-  if (meta.amountMismatch && !(Number(meta.paidCents) > 0)) {
+  // Gateway deposits normally credit themselves once the gateway confirms payment. But handle-based
+  // push methods (e.g. Chime) often can't be auto-matched to an order, so they sit PENDING even
+  // though the money has arrived in the merchant account. For those, let an admin credit it by hand
+  // after they've verified the payment — but first re-check the gateway in case it did confirm.
+  if (transaction.gatewayProvider && !meta.amountMismatch) {
+    try {
+      const synced = await syncDeposit(transaction);
+      if (synced.status === "COMPLETED") return res.json({ transaction: synced }); // gateway confirmed it
+      if (synced.status === "REJECTED") return res.status(409).json({ error: "The gateway reports this deposit as rejected.", transaction: synced });
+      transaction = (await prisma.transaction.findUnique({ where: { id: req.params.id } })) ?? transaction;
+    } catch {
+      // Gateway unreachable: fall through to a manual credit (the admin has verified the payment).
+    }
+    manualGatewayApproval = true;
+  } else if (meta.amountMismatch && !(Number(meta.paidCents) > 0)) {
+    // Older rows parked as a mismatch (before paid deposits were auto-credited) settle at what the
+    // gateway says was actually paid, with the bonus worked out on that amount.
     return res.status(409).json({ error: "The gateway didn't report a paid amount. Check status first." });
   }
-  const updated = await completeDeposit(transaction.id, { approvedManually: true }, meta.amountMismatch ? { paidCents: Number(meta.paidCents) } : {});
+
+  const updated = await completeDeposit(
+    transaction.id,
+    { approvedManually: true, ...(manualGatewayApproval ? { manualGatewayApproval: true } : {}) },
+    meta.amountMismatch ? { paidCents: Number(meta.paidCents) } : {}
+  );
   if (!updated) return res.status(409).json({ error: "This request was already processed." });
+
+  // The order was paid out-of-band to the merchant; close it at the gateway so a duplicate
+  // payment can't later land on the same order. Best-effort — the credit has already happened.
+  if (manualGatewayApproval) await closePayOrder(transaction.id).catch(() => {});
 
   await logAudit(req.userId!, "DEPOSIT_APPROVED", {
     targetType: "Transaction",
     targetId: transaction.id,
-    meta: { userId: transaction.userId, amount: Number(updated.amount), ...(meta.amountMismatch ? { requestedAmount: Number(transaction.amount) } : {}) },
+    meta: { userId: transaction.userId, amount: Number(updated.amount), manualGatewayApproval, ...(meta.amountMismatch ? { requestedAmount: Number(transaction.amount) } : {}) },
   });
   res.json({ transaction: updated });
 });
