@@ -9,7 +9,7 @@ import { openSecret } from "./secretBox";
  *  - "CASHFRENZY": agent username + password -> Bearer token login (Cash Frenzy)
  */
 
-export type ProviderStyle = "JUWA" | "CASHFRENZY";
+export type ProviderStyle = "JUWA" | "CASHFRENZY" | "MILKYWAY";
 
 export interface ProviderMeta {
   key: string; // matches a GameAutomationProvider value
@@ -28,6 +28,16 @@ export const PROVIDERS: ProviderMeta[] = [
   { key: "JUWA2", label: "Juwa 2.0", style: "JUWA", idLabel: "Agent ID", secretLabel: "Secret Key", showDivisor: true, defaultBaseUrl: "https://apiinterface.juwa2.xin" },
   { key: "GAMEVAULT", label: "Game Vault", style: "JUWA", idLabel: "Agent ID", secretLabel: "Secret Key", showDivisor: true, defaultBaseUrl: "https://apius.gamevault999.com" },
   { key: "CASHFRENZY", label: "Cash Frenzy", style: "CASHFRENZY", idLabel: "Agent Username", secretLabel: "Agent Password", showDivisor: false, defaultBaseUrl: "https://agentserver.cashfrenzy777.com" },
+  // Cash Frenzy-style (agent login + Bearer token) platforms.
+  { key: "NOBLE", label: "Noble77", style: "CASHFRENZY", idLabel: "Agent Username", secretLabel: "Agent Password", showDivisor: false, defaultBaseUrl: "https://agentserver.noble777.com" },
+  { key: "GAMEROOM", label: "Gameroom", style: "CASHFRENZY", idLabel: "Agent Username", secretLabel: "Agent Password", showDivisor: false, defaultBaseUrl: "https://agentserver.gameroom777.com" },
+  { key: "MAFIA", label: "Mafia City", style: "CASHFRENZY", idLabel: "Agent Username", secretLabel: "Agent Password", showDivisor: false, defaultBaseUrl: "https://agentserver.mafia77777.com" },
+  { key: "VEGASROLL", label: "Vegas Rolls", style: "CASHFRENZY", idLabel: "Agent Username", secretLabel: "Agent Password", showDivisor: false, defaultBaseUrl: "https://backend.vegas-roll.com" },
+  { key: "CASHMACHINE", label: "Cash Machine", style: "CASHFRENZY", idLabel: "Agent Username", secretLabel: "Agent Password", showDivisor: false, defaultBaseUrl: "https://agentserver.cashmachine777.com" },
+  { key: "MRALLINONE", label: "Mr All In One", style: "CASHFRENZY", idLabel: "Agent Username", secretLabel: "Agent Password", showDivisor: false, defaultBaseUrl: "https://agentserver.mrallinone777.com" },
+  // MilkyWay-style (/ws/service.ashx + MD5 agentKey) platforms.
+  { key: "MILKYWAY", label: "MilkyWay", style: "MILKYWAY", idLabel: "Agent Name", secretLabel: "Agent Password", showDivisor: false, defaultBaseUrl: "https://milkywayapp.xyz:8033" },
+  { key: "ORIONSTARS", label: "Orion Stars", style: "MILKYWAY", idLabel: "Agent Name", secretLabel: "Agent Password", showDivisor: false, defaultBaseUrl: "https://orionstars.vip:8033" },
 ];
 
 export function providerMeta(key: string): ProviderMeta | undefined {

@@ -53,7 +53,9 @@ const imageUrl = z
   .trim()
   .refine((u) => /^\/uploads\/[\w./-]+$/.test(u) || /^https?:\/\/\S+$/i.test(u), "Image must be an uploaded file or an http(s) URL");
 
-const automation = z.enum(["JUWA", "GAMEVAULT", "JUWA2", "CASHFRENZY"]).nullable();
+const automation = z
+  .enum(["JUWA", "GAMEVAULT", "JUWA2", "CASHFRENZY", "NOBLE", "GAMEROOM", "MAFIA", "VEGASROLL", "CASHMACHINE", "MRALLINONE", "MILKYWAY", "ORIONSTARS"])
+  .nullable();
 // The owning staff agent (User id, role AGENT). null/"" clears it.
 const agentId = z.string().max(40).nullable();
 // Short code used in auto-generated usernames (letters/numbers, e.g. "jw").

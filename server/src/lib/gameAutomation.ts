@@ -4,6 +4,7 @@ import { notifyUser } from "./webpush";
 import { loadBasis, recordGameTx } from "./gameAccounts";
 import { JuwaClient, JuwaError, GamePlatformClient } from "./juwa";
 import { CashFrenzyClient } from "./cashfrenzy";
+import { MilkyWayClient } from "./milkyway";
 import { providerMeta, resolvePlatformConfig } from "./platformProviders";
 import { getPlatformSettings } from "./settings";
 import { settleWithdraw } from "./cashoutRules";
@@ -32,6 +33,7 @@ async function clientFor(provider: string | null): Promise<GamePlatformClient | 
   const base = { baseUrl: cfg.baseUrl, agentId: cfg.agentId, secretKey: cfg.secret, balanceDivisor: cfg.balanceDivisor };
   if (meta.style === "JUWA") return new JuwaClient(base);
   if (meta.style === "CASHFRENZY") return new CashFrenzyClient(base);
+  if (meta.style === "MILKYWAY") return new MilkyWayClient(base);
   return null;
 }
 

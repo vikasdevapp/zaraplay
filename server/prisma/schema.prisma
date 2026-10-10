@@ -69,6 +69,16 @@ enum GameAutomationProvider {
   GAMEVAULT
   JUWA2
   CASHFRENZY
+  // Cash Frenzy-style (agent login + Bearer token) platforms.
+  NOBLE
+  GAMEROOM
+  MAFIA
+  VEGASROLL
+  CASHMACHINE
+  MRALLINONE
+  // MilkyWay-style (/ws/service.ashx + MD5 agentKey) platforms.
+  MILKYWAY
+  ORIONSTARS
 }
 
 // Admin-managed, encrypted credentials for a game platform's agent API, so the operator can set

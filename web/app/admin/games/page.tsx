@@ -157,6 +157,14 @@ export default function AdminGamesPage() {
             <option value="GAMEVAULT">Game Vault API (instant, automatic)</option>
             <option value="JUWA2">Juwa 2.0 API (instant, automatic)</option>
             <option value="CASHFRENZY">Cash Frenzy API (instant, automatic)</option>
+            <option value="NOBLE">Noble77 API (instant, automatic)</option>
+            <option value="GAMEROOM">Gameroom API (instant, automatic)</option>
+            <option value="MAFIA">Mafia City API (instant, automatic)</option>
+            <option value="VEGASROLL">Vegas Rolls API (instant, automatic)</option>
+            <option value="CASHMACHINE">Cash Machine API (instant, automatic)</option>
+            <option value="MRALLINONE">Mr All In One API (instant, automatic)</option>
+            <option value="MILKYWAY">MilkyWay API (instant, automatic)</option>
+            <option value="ORIONSTARS">Orion Stars API (instant, automatic)</option>
           </select>
           <span className="block text-[11px] text-muted mt-1">
             On automatic, player actions are handled instantly by the game API, with the agent queue as a safe fallback.
