@@ -165,6 +165,7 @@ export default function AdminGamesPage() {
             <option value="MRALLINONE">Mr All In One API (instant, automatic)</option>
             <option value="MILKYWAY">MilkyWay API (instant, automatic)</option>
             <option value="ORIONSTARS">Orion Stars API (instant, automatic)</option>
+            <option value="FIREKIRIN">FireKirin API (instant, automatic)</option>
           </select>
           <span className="block text-[11px] text-muted mt-1">
             On automatic, player actions are handled instantly by the game API, with the agent queue as a safe fallback.

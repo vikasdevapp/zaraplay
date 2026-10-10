@@ -38,6 +38,7 @@ export const PROVIDERS: ProviderMeta[] = [
   // MilkyWay-style (/ws/service.ashx + MD5 agentKey) platforms.
   { key: "MILKYWAY", label: "MilkyWay", style: "MILKYWAY", idLabel: "Agent Name", secretLabel: "Agent Password", showDivisor: false, defaultBaseUrl: "https://milkywayapp.xyz:8033" },
   { key: "ORIONSTARS", label: "Orion Stars", style: "MILKYWAY", idLabel: "Agent Name", secretLabel: "Agent Password", showDivisor: false, defaultBaseUrl: "https://orionstars.vip:8033" },
+  { key: "FIREKIRIN", label: "FireKirin", style: "MILKYWAY", idLabel: "Agent Name", secretLabel: "Agent Password", showDivisor: false, defaultBaseUrl: "https://firekirin.xyz:8034" },
 ];
 
 export function providerMeta(key: string): ProviderMeta | undefined {

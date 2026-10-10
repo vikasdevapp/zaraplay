@@ -54,7 +54,7 @@ const imageUrl = z
   .refine((u) => /^\/uploads\/[\w./-]+$/.test(u) || /^https?:\/\/\S+$/i.test(u), "Image must be an uploaded file or an http(s) URL");
 
 const automation = z
-  .enum(["JUWA", "GAMEVAULT", "JUWA2", "CASHFRENZY", "NOBLE", "GAMEROOM", "MAFIA", "VEGASROLL", "CASHMACHINE", "MRALLINONE", "MILKYWAY", "ORIONSTARS"])
+  .enum(["JUWA", "GAMEVAULT", "JUWA2", "CASHFRENZY", "NOBLE", "GAMEROOM", "MAFIA", "VEGASROLL", "CASHMACHINE", "MRALLINONE", "MILKYWAY", "ORIONSTARS", "FIREKIRIN"])
   .nullable();
 // The owning staff agent (User id, role AGENT). null/"" clears it.
 const agentId = z.string().max(40).nullable();
