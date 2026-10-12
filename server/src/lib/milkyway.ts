@@ -49,6 +49,19 @@ export class MilkyWayClient implements GamePlatformClient {
   private agentKey: string | null = null;
   constructor(private config: JuwaConfig) {}
 
+  // Serializes operations on this (shared) client. These panels rotate the agentKey on every login
+  // and keep one active key per agent, so two overlapping login+sign sequences would invalidate
+  // each other's key ("Signature error"). The lock guarantees one login/sign sequence at a time.
+  private lock: Promise<unknown> = Promise.resolve();
+  private withLock<T>(fn: () => Promise<T>): Promise<T> {
+    const result = this.lock.then(fn, fn);
+    this.lock = result.then(
+      () => undefined,
+      () => undefined
+    );
+    return result;
+  }
+
   private body(params: Record<string, string | number>) {
     const qs = new URLSearchParams();
     for (const [k, v] of Object.entries(params)) qs.set(k, String(v));
@@ -176,7 +189,11 @@ export class MilkyWayClient implements GamePlatformClient {
    * case, so the first time we probe the combinations and remember the one that works; after that
    * every call uses it directly.
    */
-  private async signed(action: string, params: Record<string, string | number>): Promise<{ json: MwEnvelope; raw: string }> {
+  private signed(action: string, params: Record<string, string | number>): Promise<{ json: MwEnvelope; raw: string }> {
+    return this.withLock(() => this.signedLocked(action, params));
+  }
+
+  private async signedLocked(action: string, params: Record<string, string | number>): Promise<{ json: MwEnvelope; raw: string }> {
     const name = this.config.agentId;
     const sk = `${this.config.baseUrl}|${name}`;
 
@@ -223,7 +240,12 @@ export class MilkyWayClient implements GamePlatformClient {
         trace.push(`${c.label} t=${time}->${msg}`);
       }
     }
-    const diag = `name="${name}", keyLen=${keyLen}, skew=${this.serverSkew}s`;
+    // Byte-level self-check for the documented recipe, so the exact inputs/output can be verified.
+    const key = this.agentKey!;
+    const sampleT = Math.floor(Date.now() / 1000);
+    const preHash = `${name}${sampleT}${key}`.toLowerCase();
+    const sampleSign = md5(preHash);
+    const diag = `name="${name}", key="${key}", keyLen=${keyLen}, skew=${this.serverSkew}s, verify: md5("${preHash}")=${sampleSign}`;
     throw new JuwaError(201, `all sign variants failed: ${trace.join(" | ")} [${diag}]`, false);
   }
 
@@ -257,9 +279,11 @@ export class MilkyWayClient implements GamePlatformClient {
   }
 
   async agentBalance(): Promise<number> {
-    const json = await this.login();
-    const bal = pickField(json, "Balance", "balance", "agentBalance", "money");
-    return Math.round((Number(bal ?? 0) / this.config.balanceDivisor) * 100) / 100;
+    return this.withLock(async () => {
+      const json = await this.login();
+      const bal = pickField(json, "Balance", "balance", "agentBalance", "money");
+      return Math.round((Number(bal ?? 0) / this.config.balanceDivisor) * 100) / 100;
+    });
   }
 
   async resetPassword(account: string, loginPwd: string): Promise<void> {
