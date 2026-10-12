@@ -150,49 +150,33 @@ export class MilkyWayClient implements GamePlatformClient {
    * we try the lowercased sign first, then the raw-case one, and finally a fresh login (stale key).
    */
   private async signed(action: string, params: Record<string, string | number>): Promise<{ json: MwEnvelope; raw: string }> {
-    try {
-      return await this.signedInner(action, params);
-    } catch (err) {
-      // Enrich a persistent signed-call failure with diagnostics (server clock, cookie, login
-      // response) so clock-skew / session issues can be told apart.
-      if (err instanceof JuwaError && !err.retryable) {
-        const diag = `srvEpoch=${Math.floor(Date.now() / 1000)}, srvTime=${new Date().toISOString()}, cookie=${this.cookies.size > 0}, keyLen=${this.agentKey?.length || 0}, login=${this.lastLoginRaw.slice(0, 120)}`;
-        throw new JuwaError(err.code, `${err.message} [${diag}]`, err.retryable);
-      }
-      throw err;
-    }
-  }
+    // One fresh login, then try the signature combinations that could matter for these panels and
+    // record what each returns. Whichever succeeds is used; if all fail, the trace pinpoints why.
+    this.agentKey = null;
+    await this.login();
+    const key = this.agentKey!;
+    const loginTime = this.lastTime;
 
-  private async signedInner(action: string, params: Record<string, string | number>): Promise<{ json: MwEnvelope; raw: string }> {
-    const attempt = async (lower: boolean) => {
-      const agentKey = await this.ensureKey();
-      const time = await this.freshTime();
-      const base = `${this.config.agentId}${time}${agentKey}`;
-      const sign = md5(lower ? base.toLowerCase() : base);
-      return this.post({ action, agentName: this.config.agentId, time, sign, ...params });
-    };
-    const isSignErr = (e: unknown) => e instanceof JuwaError && !e.retryable && /sign/i.test(e.message);
-
-    try {
-      return await attempt(true); // documented: lowercase
-    } catch (err) {
-      if (!isSignErr(err)) {
-        // A stale/rotated key or other non-5xx failure: re-login once and retry (lowercase).
-        if (err instanceof JuwaError && !err.retryable) {
-          this.agentKey = null;
-          return attempt(true);
-        }
-        throw err;
+    const combos: { label: string; lower: boolean; useLoginTime: boolean }[] = [
+      { label: "lc/Tfresh", lower: true, useLoginTime: false },
+      { label: "raw/Tfresh", lower: false, useLoginTime: false },
+      { label: "lc/Tlogin", lower: true, useLoginTime: true },
+      { label: "raw/Tlogin", lower: false, useLoginTime: true },
+    ];
+    const trace: string[] = [];
+    for (const c of combos) {
+      const time = c.useLoginTime ? loginTime : await this.freshTime();
+      const base = `${this.config.agentId}${time}${key}`;
+      const sign = md5(c.lower ? base.toLowerCase() : base);
+      try {
+        return await this.post({ action, agentName: this.config.agentId, time, sign, ...params });
+      } catch (err) {
+        const msg = err instanceof JuwaError ? `${err.code}:${err.message}` : err instanceof Error ? err.message : String(err);
+        trace.push(`${c.label}=${time}->${msg}`);
       }
     }
-    // Signature was rejected — try the raw-case variant, then a fresh login.
-    try {
-      return await attempt(false);
-    } catch (err) {
-      if (!isSignErr(err)) throw err;
-      this.agentKey = null;
-      return attempt(false);
-    }
+    const diag = `keyLen=${key.length}, cookie=${this.cookies.size > 0}, srvEpoch=${Math.floor(Date.now() / 1000)}`;
+    throw new JuwaError(201, `all sign variants failed: ${trace.join(" | ")} [${diag}]`, false);
   }
 
   async addUser(account: string, loginPwd: string) {
