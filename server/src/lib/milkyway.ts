@@ -19,6 +19,15 @@ import { GamePlatformClient, JuwaConfig, JuwaError } from "./juwa";
 
 const md5 = (s: string) => createHash("md5").update(s).digest("hex");
 
+// The working signature recipe per agent (timestamp unit, string case, hex case), learned on the
+// first call and reused thereafter so we don't re-probe every time.
+interface SignStrategy {
+  ms: boolean;
+  lowerInput: boolean;
+  upperHex: boolean;
+}
+const SIGN_STRATEGY = new Map<string, SignStrategy>();
+
 type MwEnvelope = Record<string, unknown>;
 
 // These panels are inconsistent about field casing and sometimes nest the payload under `data`,
@@ -151,45 +160,70 @@ export class MilkyWayClient implements GamePlatformClient {
     return this.agentKey!;
   }
 
+  // Builds the (time, sign) pair for a given strategy. `ms` => time in milliseconds (the docs say
+  // System.currentTimeMillis()), else seconds. `lowerInput` lowercases the pre-hash string (docs),
+  // `upperHex` uppercases the md5 output (the key comes back uppercase).
+  private async makeSign(strat: SignStrategy): Promise<{ time: number; sign: string }> {
+    const time = strat.ms ? Date.now() : await this.freshTime();
+    const s = `${this.config.agentId}${time}${this.agentKey}`;
+    let sign = md5(strat.lowerInput ? s.toLowerCase() : s);
+    if (strat.upperHex) sign = sign.toUpperCase();
+    return { time, sign };
+  }
+
   /**
-   * Runs a signed action. These panels are inconsistent about the signature: the docs say lowercase
-   * everything, but some verify against the raw-case agentName/agentKey. So on a "Signature error"
-   * we try the lowercased sign first, then the raw-case one, and finally a fresh login (stale key).
+   * Runs a signed action. The panels are inconsistent about timestamp unit, string case and hex
+   * case, so the first time we probe the combinations and remember the one that works; after that
+   * every call uses it directly.
    */
   private async signed(action: string, params: Record<string, string | number>): Promise<{ json: MwEnvelope; raw: string }> {
-    // One fresh login, then try the signature combinations that could matter for these panels and
-    // record what each returns. Whichever succeeds is used; if all fail, the trace pinpoints why.
-    this.agentKey = null;
-    await this.login();
-    const key = this.agentKey!;
-
     const name = this.config.agentId;
-    // The key comes back UPPERCASE, which hints the panel uses UPPERCASE md5 hex — so the signature
-    // may need to be uppercase too. Try input lowercased (per docs) and raw, each with lower- and
-    // upper-case hex output.
-    const base = (lowerInput: boolean, t: number) => {
-      const s = `${name}${t}${key}`;
-      return lowerInput ? s.toLowerCase() : s;
-    };
-    const variants: { label: string; lowerInput: boolean; upperHex: boolean }[] = [
-      { label: "lcIn/lcHex", lowerInput: true, upperHex: false },
-      { label: "lcIn/UCHex", lowerInput: true, upperHex: true },
-      { label: "rawIn/lcHex", lowerInput: false, upperHex: false },
-      { label: "rawIn/UCHex", lowerInput: false, upperHex: true },
-    ];
-    const trace: string[] = [];
-    for (const v of variants) {
-      const time = await this.freshTime(); // param is always fresh/unique
-      let sign = md5(base(v.lowerInput, time));
-      if (v.upperHex) sign = sign.toUpperCase();
+    const sk = `${this.config.baseUrl}|${name}`;
+
+    // Fast path: a known-good strategy — reuse the logged-in key, re-login if needed.
+    const known = SIGN_STRATEGY.get(sk);
+    if (known) {
+      await this.ensureKey();
+      const { time, sign } = await this.makeSign(known);
       try {
         return await this.post({ action, agentName: name, time, sign, ...params });
       } catch (err) {
-        const msg = err instanceof JuwaError ? `${err.code}:${err.message}` : err instanceof Error ? err.message : String(err);
-        trace.push(`${v.label} t=${time}->${msg}`);
+        // A rotated/expired key shows up as a non-5xx error — re-login once and retry.
+        if (err instanceof JuwaError && !err.retryable) {
+          this.agentKey = null;
+          await this.ensureKey();
+          const r = await this.makeSign(known);
+          return await this.post({ action, agentName: name, time: r.time, sign: r.sign, ...params });
+        }
+        throw err;
       }
     }
-    const diag = `name="${name}", key="${key}", keyLen=${key.length}, cookie=${this.cookies.size > 0}, skew=${this.serverSkew}s, srvEpoch=${Math.floor(Date.now() / 1000)}`;
+
+    // Probe: one fresh login, then try the combinations (millis first, per the docs).
+    this.agentKey = null;
+    await this.login();
+    const keyLen = (this.agentKey as string | null)?.length ?? 0;
+    const combos: (SignStrategy & { label: string })[] = [
+      { label: "lc/lcHex/ms", ms: true, lowerInput: true, upperHex: false },
+      { label: "raw/lcHex/ms", ms: true, lowerInput: false, upperHex: false },
+      { label: "lc/UCHex/ms", ms: true, lowerInput: true, upperHex: true },
+      { label: "raw/UCHex/ms", ms: true, lowerInput: false, upperHex: true },
+      { label: "lc/lcHex/sec", ms: false, lowerInput: true, upperHex: false },
+      { label: "raw/lcHex/sec", ms: false, lowerInput: false, upperHex: false },
+    ];
+    const trace: string[] = [];
+    for (const c of combos) {
+      const { time, sign } = await this.makeSign(c);
+      try {
+        const res = await this.post({ action, agentName: name, time, sign, ...params });
+        SIGN_STRATEGY.set(sk, { ms: c.ms, lowerInput: c.lowerInput, upperHex: c.upperHex });
+        return res;
+      } catch (err) {
+        const msg = err instanceof JuwaError ? `${err.code}:${err.message}` : err instanceof Error ? err.message : String(err);
+        trace.push(`${c.label} t=${time}->${msg}`);
+      }
+    }
+    const diag = `name="${name}", keyLen=${keyLen}, skew=${this.serverSkew}s`;
     throw new JuwaError(201, `all sign variants failed: ${trace.join(" | ")} [${diag}]`, false);
   }
 
