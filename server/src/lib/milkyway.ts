@@ -108,15 +108,20 @@ export class MilkyWayClient implements GamePlatformClient {
     return { json, raw };
   }
 
-  // The docs' sign examples all use a 10-digit epoch in SECONDS (despite mentioning millis), so
-  // send seconds for both the `time` param and the signature. The platform also treats each `time`
-  // as single-use ("expires after being used successfully once"), and at seconds resolution a login
-  // and the signed call that follows can land in the same second and reuse the value — which the
-  // platform rejects as "Session timeout". So hand out a strictly increasing seconds value.
+  // Timestamps are a 10-digit epoch in SECONDS. Two constraints together:
+  //  - The signature must use the platform's *current* second (it recomputes the sign against its
+  //    own clock, so a value even 1s ahead fails "Signature error").
+  //  - Each `time` is single-use ("expires after being used successfully once"), so a login and the
+  //    signed call after it must not share a second, or it fails "Session timeout".
+  // So return the real current second, but if it was already used, WAIT for the real clock to tick
+  // to the next second (never guess a future value, which would drift ahead of the platform).
   private lastTime = 0;
-  private now() {
+  private async freshTime(): Promise<number> {
     let t = Math.floor(Date.now() / 1000);
-    if (t <= this.lastTime) t = this.lastTime + 1;
+    while (t <= this.lastTime) {
+      await new Promise((r) => setTimeout(r, 300));
+      t = Math.floor(Date.now() / 1000);
+    }
     this.lastTime = t;
     return t;
   }
@@ -125,7 +130,7 @@ export class MilkyWayClient implements GamePlatformClient {
   private lastLoginRaw = "";
 
   private async login(): Promise<MwEnvelope> {
-    const { json, raw } = await this.post({ action: "agentLogin", agentName: this.config.agentId, agentPasswd: md5(this.config.secretKey), time: this.now() });
+    const { json, raw } = await this.post({ action: "agentLogin", agentName: this.config.agentId, agentPasswd: md5(this.config.secretKey), time: await this.freshTime() });
     this.lastLoginRaw = raw;
     const key = pickField(json, "agentKey", "agentkey", "key");
     if (!key) throw new JuwaError(201, `Agent login did not return a key. Response: ${raw.slice(0, 200)}`, false);
@@ -151,7 +156,7 @@ export class MilkyWayClient implements GamePlatformClient {
       // Enrich a persistent signed-call failure with diagnostics (server clock, cookie, login
       // response) so clock-skew / session issues can be told apart.
       if (err instanceof JuwaError && !err.retryable) {
-        const diag = `srvEpoch=${this.now()}, srvTime=${new Date().toISOString()}, cookie=${this.cookies.size > 0}, keyLen=${this.agentKey?.length || 0}, login=${this.lastLoginRaw.slice(0, 120)}`;
+        const diag = `srvEpoch=${Math.floor(Date.now() / 1000)}, srvTime=${new Date().toISOString()}, cookie=${this.cookies.size > 0}, keyLen=${this.agentKey?.length || 0}, login=${this.lastLoginRaw.slice(0, 120)}`;
         throw new JuwaError(err.code, `${err.message} [${diag}]`, err.retryable);
       }
       throw err;
@@ -161,7 +166,7 @@ export class MilkyWayClient implements GamePlatformClient {
   private async signedInner(action: string, params: Record<string, string | number>): Promise<{ json: MwEnvelope; raw: string }> {
     const attempt = async (lower: boolean) => {
       const agentKey = await this.ensureKey();
-      const time = this.now();
+      const time = await this.freshTime();
       const base = `${this.config.agentId}${time}${agentKey}`;
       const sign = md5(lower ? base.toLowerCase() : base);
       return this.post({ action, agentName: this.config.agentId, time, sign, ...params });
