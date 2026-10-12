@@ -29,6 +29,7 @@ interface PendingRequest {
   amount: string;
   createdAt: string;
   inProgress: boolean;
+  agentNote: string | null;
 }
 
 interface UserGame {
@@ -485,6 +486,7 @@ export default function GamesPage() {
                           ⏳ {REQUEST_LABELS[r.type]}
                           {Number(r.amount) > 0 && ` · ${money(r.amount)}`}
                           <span className="text-muted"> · {r.inProgress ? "an agent is on it" : "waiting for an agent"}</span>
+                          {r.agentNote && <span className="block text-red-400 mt-0.5">{r.agentNote}</span>}
                         </span>
                         {!r.inProgress && (
                           <button

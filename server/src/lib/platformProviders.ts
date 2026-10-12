@@ -39,6 +39,8 @@ export const PROVIDERS: ProviderMeta[] = [
   { key: "MILKYWAY", label: "MilkyWay", style: "MILKYWAY", idLabel: "Agent Name", secretLabel: "Agent Password", showDivisor: false, defaultBaseUrl: "https://milkywayapp.xyz:8033" },
   { key: "ORIONSTARS", label: "Orion Stars", style: "MILKYWAY", idLabel: "Agent Name", secretLabel: "Agent Password", showDivisor: false, defaultBaseUrl: "https://orionstars.vip:8033" },
   { key: "FIREKIRIN", label: "FireKirin", style: "MILKYWAY", idLabel: "Agent Name", secretLabel: "Agent Password", showDivisor: false, defaultBaseUrl: "https://firekirin.xyz:8034" },
+  // Juwa-style (agent_id + secret, MD5-signed) — same API as Game Vault.
+  { key: "VEGASSWEEP", label: "Vegas Sweep", style: "JUWA", idLabel: "Agent ID", secretLabel: "Secret Key", showDivisor: true, defaultBaseUrl: "https://apius.gamevault999.com" },
 ];
 
 export function providerMeta(key: string): ProviderMeta | undefined {

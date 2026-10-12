@@ -48,7 +48,7 @@ gamesRouter.get("/mine", async (req: AuthedRequest, res) => {
         requests: {
           where: { status: "PENDING" },
           orderBy: { createdAt: "asc" },
-          select: { id: true, type: true, amount: true, createdAt: true, claimedById: true },
+          select: { id: true, type: true, amount: true, createdAt: true, claimedById: true, agentNote: true },
         },
       },
     }),
