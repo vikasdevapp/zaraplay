@@ -19,15 +19,21 @@ import { GamePlatformClient, JuwaConfig, JuwaError } from "./juwa";
 
 const md5 = (s: string) => createHash("md5").update(s).digest("hex");
 
-interface MwEnvelope {
-  code?: number;
-  msg?: string;
-  agentKey?: string;
-  Balance?: number | string;
-  agentBalance?: number | string;
-  userbalance?: number | string;
-  gameId?: number | string;
-  status?: number;
+type MwEnvelope = Record<string, unknown>;
+
+// These panels are inconsistent about field casing and sometimes nest the payload under `data`,
+// so look a value up case-insensitively at the top level and inside `data`.
+function pickField(json: MwEnvelope, ...names: string[]): unknown {
+  const sources: Record<string, unknown>[] = [json];
+  if (json.data && typeof json.data === "object") sources.push(json.data as Record<string, unknown>);
+  for (const src of sources) {
+    const lower = new Map(Object.entries(src).map(([k, v]) => [k.toLowerCase(), v]));
+    for (const n of names) {
+      const v = lower.get(n.toLowerCase());
+      if (v !== undefined && v !== null && v !== "") return v;
+    }
+  }
+  return undefined;
 }
 
 export class MilkyWayClient implements GamePlatformClient {
@@ -40,7 +46,7 @@ export class MilkyWayClient implements GamePlatformClient {
     return `${this.config.baseUrl}/ws/service.ashx?${qs.toString()}`;
   }
 
-  private async post(params: Record<string, string | number>): Promise<MwEnvelope> {
+  private async post(params: Record<string, string | number>): Promise<{ json: MwEnvelope; raw: string }> {
     let res: Response;
     try {
       res = await fetch(this.url(params), { method: "POST", signal: AbortSignal.timeout(20_000) });
@@ -58,21 +64,24 @@ export class MilkyWayClient implements GamePlatformClient {
     } catch {
       throw new JuwaError(res.status, `Game platform returned a non-JSON response (HTTP ${res.status}): ${raw.slice(0, 180)}`, res.status >= 500);
     }
-    // These panels return `code` as a number on some actions and a string ("200") on others, so
-    // compare numerically. On failure include the raw body so the real reason is visible.
-    if (Number(json.code) !== 200) {
-      const code = Number.isFinite(Number(json.code)) ? Number(json.code) : res.status;
-      throw new JuwaError(code, json.msg || `Game platform error: ${raw.slice(0, 180)}`, code >= 500);
+    // `code` comes back as a number on some actions and a string ("200") on others, so compare
+    // numerically. On failure include the raw body so the real reason is visible.
+    const code = pickField(json, "code", "status_code");
+    if (Number(code) !== 200) {
+      const c = Number.isFinite(Number(code)) ? Number(code) : res.status;
+      const msg = pickField(json, "msg", "message");
+      throw new JuwaError(c, (typeof msg === "string" && msg) || `Game platform error: ${raw.slice(0, 180)}`, c >= 500);
     }
-    return json;
+    return { json, raw };
   }
 
   /** Logs in to obtain the rotating agentKey used to sign later calls. */
   private async login(): Promise<MwEnvelope> {
-    const data = await this.post({ action: "agentLogin", agentName: this.config.agentId, agentPasswd: md5(this.config.secretKey), time: Date.now() });
-    if (!data.agentKey) throw new JuwaError(201, "Agent login did not return a key.", false);
-    this.agentKey = data.agentKey;
-    return data;
+    const { json, raw } = await this.post({ action: "agentLogin", agentName: this.config.agentId, agentPasswd: md5(this.config.secretKey), time: Date.now() });
+    const key = pickField(json, "agentKey", "agentkey", "key");
+    if (!key) throw new JuwaError(201, `Agent login did not return a key. Response: ${raw.slice(0, 200)}`, false);
+    this.agentKey = String(key);
+    return json;
   }
 
   private async ensureKey(): Promise<string> {
@@ -82,7 +91,7 @@ export class MilkyWayClient implements GamePlatformClient {
   }
 
   /** Runs a signed action; on an auth-style failure, re-logs in once and retries. */
-  private async signed(action: string, params: Record<string, string | number>): Promise<MwEnvelope> {
+  private async signed(action: string, params: Record<string, string | number>): Promise<{ json: MwEnvelope; raw: string }> {
     const run = async () => {
       const agentKey = await this.ensureKey();
       const time = Date.now();
@@ -125,13 +134,15 @@ export class MilkyWayClient implements GamePlatformClient {
   }
 
   async userBalance(account: string): Promise<number> {
-    const data = await this.signed("queryInfo", { account });
-    return Math.round((Number(data.userbalance ?? 0) / this.config.balanceDivisor) * 100) / 100;
+    const { json } = await this.signed("queryInfo", { account });
+    const bal = pickField(json, "userbalance", "userBalance", "balance");
+    return Math.round((Number(bal ?? 0) / this.config.balanceDivisor) * 100) / 100;
   }
 
   async agentBalance(): Promise<number> {
-    const data = await this.login();
-    return Math.round((Number(data.Balance ?? 0) / this.config.balanceDivisor) * 100) / 100;
+    const json = await this.login();
+    const bal = pickField(json, "Balance", "balance", "agentBalance", "money");
+    return Math.round((Number(bal ?? 0) / this.config.balanceDivisor) * 100) / 100;
   }
 
   async resetPassword(account: string, loginPwd: string): Promise<void> {

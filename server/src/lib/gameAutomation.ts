@@ -81,14 +81,23 @@ export async function tryAutoCreateAccount(userGameId: string): Promise<AutoCrea
   const ug = await prisma.userGame.findUnique({ where: { id: userGameId }, include: { game: true, user: { select: { fullName: true } } } });
   if (!ug || ug.status !== "PENDING") return { created: false };
   if (!ug.game.automationProvider) return { created: false }; // manual game — expected, no log
-  const client = await clientFor(ug.game.automationProvider);
-  if (!client) {
-    console.warn(`[auto] ${ug.game.name} is set to ${ug.game.automationProvider} automation but ${ug.game.automationProvider}_BASE_URL/_AGENT_ID/_SECRET_KEY are not all set on the server — using the agent queue.`);
-    return { created: false };
-  }
 
   const request = await prisma.gameRequest.findFirst({ where: { userGameId, type: "CREATE_ACCOUNT", status: "PENDING", claimedById: null } });
   if (!request) return { created: false };
+
+  // Records why automation fell back so the admin/agent can see it on the pending request instead
+  // of a silent "waiting for an agent".
+  const noteFallback = (detail: string) =>
+    prisma.gameRequest.update({ where: { id: request.id }, data: { agentNote: `Auto-create fell back to an agent: ${detail}` } }).catch(() => {});
+
+  const client = await clientFor(ug.game.automationProvider);
+  if (!client) {
+    const reason = `${ug.game.automationProvider} credentials are not set/valid — add them in Admin → Game Platforms and Test Connection.`;
+    console.warn(`[auto] ${ug.game.name}: ${reason}`);
+    await noteFallback(reason);
+    return { created: false };
+  }
+
   const firstLoad = Number(request.amount);
 
   // Create the platform account (retry a new name if the platform says it's taken).
@@ -106,6 +115,7 @@ export async function tryAutoCreateAccount(userGameId: string): Promise<AutoCrea
       if (err instanceof JuwaError && err.code === 20) continue; // name taken on the platform: try another
       const detail = err instanceof JuwaError ? `code ${err.code}: ${err.message}` : err instanceof Error ? err.message : String(err);
       console.warn(`[juwa-auto] addUser failed for ${ug.game.name} (${detail}) — falling back to the agent queue.`);
+      await noteFallback(detail);
       return { created: false }; // any other error (IP, permission, network): fall back to agent
     }
   }
