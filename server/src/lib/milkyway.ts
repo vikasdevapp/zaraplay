@@ -85,9 +85,15 @@ export class MilkyWayClient implements GamePlatformClient {
     return { json, raw };
   }
 
+  // The docs' sign examples all use a 10-digit epoch in SECONDS (despite mentioning millis), so
+  // send seconds for both the `time` param and the signature.
+  private now() {
+    return Math.floor(Date.now() / 1000);
+  }
+
   /** Logs in to obtain the rotating agentKey used to sign later calls. */
   private async login(): Promise<MwEnvelope> {
-    const { json, raw } = await this.post({ action: "agentLogin", agentName: this.config.agentId, agentPasswd: md5(this.config.secretKey), time: Date.now() });
+    const { json, raw } = await this.post({ action: "agentLogin", agentName: this.config.agentId, agentPasswd: md5(this.config.secretKey), time: this.now() });
     const key = pickField(json, "agentKey", "agentkey", "key");
     if (!key) throw new JuwaError(201, `Agent login did not return a key. Response: ${raw.slice(0, 200)}`, false);
     this.agentKey = String(key);
@@ -100,23 +106,40 @@ export class MilkyWayClient implements GamePlatformClient {
     return this.agentKey!;
   }
 
-  /** Runs a signed action; on an auth-style failure, re-logs in once and retries. */
+  /**
+   * Runs a signed action. These panels are inconsistent about the signature: the docs say lowercase
+   * everything, but some verify against the raw-case agentName/agentKey. So on a "Signature error"
+   * we try the lowercased sign first, then the raw-case one, and finally a fresh login (stale key).
+   */
   private async signed(action: string, params: Record<string, string | number>): Promise<{ json: MwEnvelope; raw: string }> {
-    const run = async () => {
+    const attempt = async (lower: boolean) => {
       const agentKey = await this.ensureKey();
-      const time = Date.now();
-      const sign = md5(`${this.config.agentId}${time}${agentKey}`.toLowerCase());
+      const time = this.now();
+      const base = `${this.config.agentId}${time}${agentKey}`;
+      const sign = md5(lower ? base.toLowerCase() : base);
       return this.post({ action, agentName: this.config.agentId, time, sign, ...params });
     };
+    const isSignErr = (e: unknown) => e instanceof JuwaError && !e.retryable && /sign/i.test(e.message);
+
     try {
-      return await run();
+      return await attempt(true); // documented: lowercase
     } catch (err) {
-      // A stale/rotated agentKey shows up as a non-5xx failure — re-login once and retry.
-      if (err instanceof JuwaError && !err.retryable) {
-        this.agentKey = null;
-        return run();
+      if (!isSignErr(err)) {
+        // A stale/rotated key or other non-5xx failure: re-login once and retry (lowercase).
+        if (err instanceof JuwaError && !err.retryable) {
+          this.agentKey = null;
+          return attempt(true);
+        }
+        throw err;
       }
-      throw err;
+    }
+    // Signature was rejected — try the raw-case variant, then a fresh login.
+    try {
+      return await attempt(false);
+    } catch (err) {
+      if (!isSignErr(err)) throw err;
+      this.agentKey = null;
+      return attempt(false);
     }
   }
 
