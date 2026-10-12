@@ -49,6 +49,8 @@ export class MilkyWayClient implements GamePlatformClient {
   // Remembers the session cookie the panel sets at login (ASP.NET .ashx session), so signed calls
   // that follow are recognised as part of the same session (otherwise they fail "Session timeout").
   private cookies = new Map<string, string>();
+  // Seconds to add to our clock to get the platform's (from its Date response header).
+  private serverSkew = 0;
 
   private cookieHeader(): string | undefined {
     if (!this.cookies.size) return undefined;
@@ -90,6 +92,13 @@ export class MilkyWayClient implements GamePlatformClient {
       throw new JuwaError(-1, `Could not reach the game platform (${detail}). Check the base URL/port and that this server's IP is whitelisted on the game panel.`, true);
     }
     this.storeCookies(res);
+    // The server's Date header reveals its clock, so we can detect skew vs ours (these panels may
+    // validate the signature against their own clock rather than the time we send).
+    const dateHeader = res.headers.get("date");
+    if (dateHeader) {
+      const serverSec = Math.floor(new Date(dateHeader).getTime() / 1000);
+      if (Number.isFinite(serverSec)) this.serverSkew = serverSec - Math.floor(Date.now() / 1000);
+    }
     const raw = await res.text();
     let json: MwEnvelope;
     try {
@@ -155,33 +164,42 @@ export class MilkyWayClient implements GamePlatformClient {
     this.agentKey = null;
     await this.login();
     const key = this.agentKey!;
-    const loginTime = this.lastTime;
 
-    // The trace showed the platform checks `time` freshness first (reused login time -> "Session
-    // timeout") then the signature, and the signature only validates when it's built from the LOGIN
-    // timestamp — a fresh time in the sign gives "Signature error". So the `time` param must be
-    // fresh (unique) while the sign is md5(agentName + loginTime + key). Case still unknown, so try
-    // lowercase and raw; keep the same-time variants as a fallback.
-    const combos: { label: string; lower: boolean; signLoginTime: boolean }[] = [
-      { label: "lc/signTlogin", lower: true, signLoginTime: true },
-      { label: "raw/signTlogin", lower: false, signLoginTime: true },
-      { label: "lc/signFresh", lower: true, signLoginTime: false },
-      { label: "raw/signFresh", lower: false, signLoginTime: false },
-    ];
+    const name = this.config.agentId;
+    // Case transforms to try: the docs say lowercase everything, but the key comes back UPPERCASE,
+    // so the platform may keep the agentName and/or key in their original case.
+    const signOf = (variant: string, t: number) => {
+      switch (variant) {
+        case "lcAll":
+          return md5(`${name}${t}${key}`.toLowerCase());
+        case "rawAll":
+          return md5(`${name}${t}${key}`);
+        case "lcName+rawKey":
+          return md5(`${name.toLowerCase()}${t}${key}`);
+        case "rawName+lcKey":
+          return md5(`${name}${t}${key.toLowerCase()}`);
+        default:
+          return md5(`${name}${t}${key}`.toLowerCase());
+      }
+    };
+    const variants = ["lcAll", "rawAll", "lcName+rawKey", "rawName+lcKey"];
     const trace: string[] = [];
-    for (const c of combos) {
-      const time = await this.freshTime(); // param time is always fresh/unique
-      const signTime = c.signLoginTime ? loginTime : time;
-      const base = `${this.config.agentId}${signTime}${key}`;
-      const sign = md5(c.lower ? base.toLowerCase() : base);
-      try {
-        return await this.post({ action, agentName: this.config.agentId, time, sign, ...params });
-      } catch (err) {
-        const msg = err instanceof JuwaError ? `${err.code}:${err.message}` : err instanceof Error ? err.message : String(err);
-        trace.push(`${c.label} p=${time} s=${signTime}->${msg}`);
+    for (const v of variants) {
+      // Try the signature against our clock and (in case the platform validates against its own
+      // clock) its skew-corrected clock.
+      for (const useSkew of [false, true]) {
+        const time = await this.freshTime(); // param is always fresh/unique
+        const signTime = useSkew ? time + this.serverSkew : time;
+        const sign = signOf(v, signTime);
+        try {
+          return await this.post({ action, agentName: name, time, sign, ...params });
+        } catch (err) {
+          const msg = err instanceof JuwaError ? `${err.code}:${err.message}` : err instanceof Error ? err.message : String(err);
+          trace.push(`${v}${useSkew ? "+skew" : ""} s=${signTime}->${msg}`);
+        }
       }
     }
-    const diag = `keyLen=${key.length}, cookie=${this.cookies.size > 0}, srvEpoch=${Math.floor(Date.now() / 1000)}`;
+    const diag = `name="${name}", keyLen=${key.length}, cookie=${this.cookies.size > 0}, skew=${this.serverSkew}s, srvEpoch=${Math.floor(Date.now() / 1000)}`;
     throw new JuwaError(201, `all sign variants failed: ${trace.join(" | ")} [${diag}]`, false);
   }
 
