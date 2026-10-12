@@ -228,3 +228,18 @@ export class MilkyWayClient implements GamePlatformClient {
     return;
   }
 }
+
+// One shared client per unique credential set. These panels rotate the agentKey on every login and
+// invalidate the previous one, so if each operation (and Test Connection) built its own client and
+// logged in separately, they'd invalidate each other's key — the next signed call then fails
+// "Session timeout". Reusing one instance keeps a single logged-in session whose key is shared.
+const clients = new Map<string, MilkyWayClient>();
+export function getMilkyWayClient(config: JuwaConfig): MilkyWayClient {
+  const sig = `${config.baseUrl}|${config.agentId}|${config.secretKey}|${config.balanceDivisor}`;
+  let c = clients.get(sig);
+  if (!c) {
+    c = new MilkyWayClient(config);
+    clients.set(sig, c);
+  }
+  return c;
+}
