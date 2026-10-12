@@ -68,12 +68,11 @@ export class MilkyWayClient implements GamePlatformClient {
   }
 
   private async post(params: Record<string, string | number>): Promise<{ json: MwEnvelope; raw: string }> {
-    // Send the params both in the query string and as a form-urlencoded body: these .ashx panels
-    // read some actions from the query and others (sensitive fields like account/passwd) from the
-    // POST body, so covering both avoids action-specific failures. The sign isn't affected.
-    const body = this.body(params);
-    const url = `${this.config.baseUrl}/ws/service.ashx?${body.toString()}`;
-    const headers: Record<string, string> = { "Content-Type": "application/x-www-form-urlencoded" };
+    // Params go in the query string ONLY (as the docs' reference URLs show). Sending them in both
+    // the query and a form body makes ASP.NET's Request.Params join the duplicates with a comma
+    // ("time=1591..,1591.."), which corrupts the value the server rebuilds the signature from.
+    const url = `${this.config.baseUrl}/ws/service.ashx?${this.body(params).toString()}`;
+    const headers: Record<string, string> = {};
     const cookie = this.cookieHeader();
     if (cookie) headers.Cookie = cookie;
     let res: Response;
@@ -81,7 +80,6 @@ export class MilkyWayClient implements GamePlatformClient {
       res = await fetch(url, {
         method: "POST",
         headers,
-        body,
         signal: AbortSignal.timeout(20_000),
       });
     } catch (err) {
