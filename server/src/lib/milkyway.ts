@@ -157,22 +157,28 @@ export class MilkyWayClient implements GamePlatformClient {
     const key = this.agentKey!;
     const loginTime = this.lastTime;
 
-    const combos: { label: string; lower: boolean; useLoginTime: boolean }[] = [
-      { label: "lc/Tfresh", lower: true, useLoginTime: false },
-      { label: "raw/Tfresh", lower: false, useLoginTime: false },
-      { label: "lc/Tlogin", lower: true, useLoginTime: true },
-      { label: "raw/Tlogin", lower: false, useLoginTime: true },
+    // The trace showed the platform checks `time` freshness first (reused login time -> "Session
+    // timeout") then the signature, and the signature only validates when it's built from the LOGIN
+    // timestamp — a fresh time in the sign gives "Signature error". So the `time` param must be
+    // fresh (unique) while the sign is md5(agentName + loginTime + key). Case still unknown, so try
+    // lowercase and raw; keep the same-time variants as a fallback.
+    const combos: { label: string; lower: boolean; signLoginTime: boolean }[] = [
+      { label: "lc/signTlogin", lower: true, signLoginTime: true },
+      { label: "raw/signTlogin", lower: false, signLoginTime: true },
+      { label: "lc/signFresh", lower: true, signLoginTime: false },
+      { label: "raw/signFresh", lower: false, signLoginTime: false },
     ];
     const trace: string[] = [];
     for (const c of combos) {
-      const time = c.useLoginTime ? loginTime : await this.freshTime();
-      const base = `${this.config.agentId}${time}${key}`;
+      const time = await this.freshTime(); // param time is always fresh/unique
+      const signTime = c.signLoginTime ? loginTime : time;
+      const base = `${this.config.agentId}${signTime}${key}`;
       const sign = md5(c.lower ? base.toLowerCase() : base);
       try {
         return await this.post({ action, agentName: this.config.agentId, time, sign, ...params });
       } catch (err) {
         const msg = err instanceof JuwaError ? `${err.code}:${err.message}` : err instanceof Error ? err.message : String(err);
-        trace.push(`${c.label}=${time}->${msg}`);
+        trace.push(`${c.label} p=${time} s=${signTime}->${msg}`);
       }
     }
     const diag = `keyLen=${key.length}, cookie=${this.cookies.size > 0}, srvEpoch=${Math.floor(Date.now() / 1000)}`;
