@@ -40,16 +40,26 @@ export class MilkyWayClient implements GamePlatformClient {
   private agentKey: string | null = null;
   constructor(private config: JuwaConfig) {}
 
-  private url(params: Record<string, string | number>) {
+  private body(params: Record<string, string | number>) {
     const qs = new URLSearchParams();
     for (const [k, v] of Object.entries(params)) qs.set(k, String(v));
-    return `${this.config.baseUrl}/ws/service.ashx?${qs.toString()}`;
+    return qs;
   }
 
   private async post(params: Record<string, string | number>): Promise<{ json: MwEnvelope; raw: string }> {
+    // Send the params both in the query string and as a form-urlencoded body: these .ashx panels
+    // read some actions from the query and others (sensitive fields like account/passwd) from the
+    // POST body, so covering both avoids action-specific failures. The sign isn't affected.
+    const body = this.body(params);
+    const url = `${this.config.baseUrl}/ws/service.ashx?${body.toString()}`;
     let res: Response;
     try {
-      res = await fetch(this.url(params), { method: "POST", signal: AbortSignal.timeout(20_000) });
+      res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body,
+        signal: AbortSignal.timeout(20_000),
+      });
     } catch (err) {
       // Node's fetch surfaces only "fetch failed"; the real reason (TLS cert, ECONNREFUSED,
       // ETIMEDOUT, DNS) is on err.cause — include it so connectivity/whitelist issues are clear.
