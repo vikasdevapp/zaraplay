@@ -164,40 +164,32 @@ export class MilkyWayClient implements GamePlatformClient {
     const key = this.agentKey!;
 
     const name = this.config.agentId;
-    // Case transforms to try: the docs say lowercase everything, but the key comes back UPPERCASE,
-    // so the platform may keep the agentName and/or key in their original case.
-    const signOf = (variant: string, t: number) => {
-      switch (variant) {
-        case "lcAll":
-          return md5(`${name}${t}${key}`.toLowerCase());
-        case "rawAll":
-          return md5(`${name}${t}${key}`);
-        case "lcName+rawKey":
-          return md5(`${name.toLowerCase()}${t}${key}`);
-        case "rawName+lcKey":
-          return md5(`${name}${t}${key.toLowerCase()}`);
-        default:
-          return md5(`${name}${t}${key}`.toLowerCase());
-      }
+    // The key comes back UPPERCASE, which hints the panel uses UPPERCASE md5 hex — so the signature
+    // may need to be uppercase too. Try input lowercased (per docs) and raw, each with lower- and
+    // upper-case hex output.
+    const base = (lowerInput: boolean, t: number) => {
+      const s = `${name}${t}${key}`;
+      return lowerInput ? s.toLowerCase() : s;
     };
-    const variants = ["lcAll", "rawAll", "lcName+rawKey", "rawName+lcKey"];
+    const variants: { label: string; lowerInput: boolean; upperHex: boolean }[] = [
+      { label: "lcIn/lcHex", lowerInput: true, upperHex: false },
+      { label: "lcIn/UCHex", lowerInput: true, upperHex: true },
+      { label: "rawIn/lcHex", lowerInput: false, upperHex: false },
+      { label: "rawIn/UCHex", lowerInput: false, upperHex: true },
+    ];
     const trace: string[] = [];
     for (const v of variants) {
-      // Try the signature against our clock and (in case the platform validates against its own
-      // clock) its skew-corrected clock.
-      for (const useSkew of [false, true]) {
-        const time = await this.freshTime(); // param is always fresh/unique
-        const signTime = useSkew ? time + this.serverSkew : time;
-        const sign = signOf(v, signTime);
-        try {
-          return await this.post({ action, agentName: name, time, sign, ...params });
-        } catch (err) {
-          const msg = err instanceof JuwaError ? `${err.code}:${err.message}` : err instanceof Error ? err.message : String(err);
-          trace.push(`${v}${useSkew ? "+skew" : ""} s=${signTime}->${msg}`);
-        }
+      const time = await this.freshTime(); // param is always fresh/unique
+      let sign = md5(base(v.lowerInput, time));
+      if (v.upperHex) sign = sign.toUpperCase();
+      try {
+        return await this.post({ action, agentName: name, time, sign, ...params });
+      } catch (err) {
+        const msg = err instanceof JuwaError ? `${err.code}:${err.message}` : err instanceof Error ? err.message : String(err);
+        trace.push(`${v.label} t=${time}->${msg}`);
       }
     }
-    const diag = `name="${name}", keyLen=${key.length}, cookie=${this.cookies.size > 0}, skew=${this.serverSkew}s, srvEpoch=${Math.floor(Date.now() / 1000)}`;
+    const diag = `name="${name}", key="${key}", keyLen=${key.length}, cookie=${this.cookies.size > 0}, skew=${this.serverSkew}s, srvEpoch=${Math.floor(Date.now() / 1000)}`;
     throw new JuwaError(201, `all sign variants failed: ${trace.join(" | ")} [${diag}]`, false);
   }
 
