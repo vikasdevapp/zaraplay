@@ -45,17 +45,24 @@ export class MilkyWayClient implements GamePlatformClient {
     try {
       res = await fetch(this.url(params), { method: "POST", signal: AbortSignal.timeout(20_000) });
     } catch (err) {
-      throw new JuwaError(-1, `Could not reach the game platform: ${err instanceof Error ? err.message : "network error"}`, true);
+      // Node's fetch surfaces only "fetch failed"; the real reason (TLS cert, ECONNREFUSED,
+      // ETIMEDOUT, DNS) is on err.cause — include it so connectivity/whitelist issues are clear.
+      const cause = (err as { cause?: { code?: string; message?: string } })?.cause;
+      const detail = cause?.code || cause?.message || (err instanceof Error ? err.message : "network error");
+      throw new JuwaError(-1, `Could not reach the game platform (${detail}). Check the base URL/port and that this server's IP is whitelisted on the game panel.`, true);
     }
+    const raw = await res.text();
     let json: MwEnvelope;
     try {
-      json = (await res.json()) as MwEnvelope;
+      json = JSON.parse(raw) as MwEnvelope;
     } catch {
-      throw new JuwaError(res.status, `Game platform returned a non-JSON response (HTTP ${res.status}).`, res.status >= 500);
+      throw new JuwaError(res.status, `Game platform returned a non-JSON response (HTTP ${res.status}): ${raw.slice(0, 180)}`, res.status >= 500);
     }
-    if (json.code !== 200) {
-      const code = json.code ?? res.status;
-      throw new JuwaError(code, json.msg || `Game platform error (code ${code}).`, code >= 500);
+    // These panels return `code` as a number on some actions and a string ("200") on others, so
+    // compare numerically. On failure include the raw body so the real reason is visible.
+    if (Number(json.code) !== 200) {
+      const code = Number.isFinite(Number(json.code)) ? Number(json.code) : res.status;
+      throw new JuwaError(code, json.msg || `Game platform error: ${raw.slice(0, 180)}`, code >= 500);
     }
     return json;
   }
