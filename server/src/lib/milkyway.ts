@@ -115,8 +115,11 @@ export class MilkyWayClient implements GamePlatformClient {
   }
 
   /** Logs in to obtain the rotating agentKey used to sign later calls. */
+  private lastLoginRaw = "";
+
   private async login(): Promise<MwEnvelope> {
     const { json, raw } = await this.post({ action: "agentLogin", agentName: this.config.agentId, agentPasswd: md5(this.config.secretKey), time: this.now() });
+    this.lastLoginRaw = raw;
     const key = pickField(json, "agentKey", "agentkey", "key");
     if (!key) throw new JuwaError(201, `Agent login did not return a key. Response: ${raw.slice(0, 200)}`, false);
     this.agentKey = String(key);
@@ -135,6 +138,20 @@ export class MilkyWayClient implements GamePlatformClient {
    * we try the lowercased sign first, then the raw-case one, and finally a fresh login (stale key).
    */
   private async signed(action: string, params: Record<string, string | number>): Promise<{ json: MwEnvelope; raw: string }> {
+    try {
+      return await this.signedInner(action, params);
+    } catch (err) {
+      // Enrich a persistent signed-call failure with diagnostics (server clock, cookie, login
+      // response) so clock-skew / session issues can be told apart.
+      if (err instanceof JuwaError && !err.retryable) {
+        const diag = `srvEpoch=${this.now()}, srvTime=${new Date().toISOString()}, cookie=${this.cookies.size > 0}, keyLen=${this.agentKey?.length || 0}, login=${this.lastLoginRaw.slice(0, 120)}`;
+        throw new JuwaError(err.code, `${err.message} [${diag}]`, err.retryable);
+      }
+      throw err;
+    }
+  }
+
+  private async signedInner(action: string, params: Record<string, string | number>): Promise<{ json: MwEnvelope; raw: string }> {
     const attempt = async (lower: boolean) => {
       const agentKey = await this.ensureKey();
       const time = this.now();
