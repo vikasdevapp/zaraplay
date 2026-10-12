@@ -46,17 +46,39 @@ export class MilkyWayClient implements GamePlatformClient {
     return qs;
   }
 
+  // Remembers the session cookie the panel sets at login (ASP.NET .ashx session), so signed calls
+  // that follow are recognised as part of the same session (otherwise they fail "Session timeout").
+  private cookies = new Map<string, string>();
+
+  private cookieHeader(): string | undefined {
+    if (!this.cookies.size) return undefined;
+    return Array.from(this.cookies, ([k, v]) => `${k}=${v}`).join("; ");
+  }
+
+  private storeCookies(res: Response) {
+    const getSetCookie = (res.headers as unknown as { getSetCookie?: () => string[] }).getSetCookie;
+    const list = getSetCookie ? getSetCookie.call(res.headers) : (res.headers.get("set-cookie") ? [res.headers.get("set-cookie")!] : []);
+    for (const c of list) {
+      const pair = c.split(";", 1)[0];
+      const eq = pair.indexOf("=");
+      if (eq > 0) this.cookies.set(pair.slice(0, eq).trim(), pair.slice(eq + 1).trim());
+    }
+  }
+
   private async post(params: Record<string, string | number>): Promise<{ json: MwEnvelope; raw: string }> {
     // Send the params both in the query string and as a form-urlencoded body: these .ashx panels
     // read some actions from the query and others (sensitive fields like account/passwd) from the
     // POST body, so covering both avoids action-specific failures. The sign isn't affected.
     const body = this.body(params);
     const url = `${this.config.baseUrl}/ws/service.ashx?${body.toString()}`;
+    const headers: Record<string, string> = { "Content-Type": "application/x-www-form-urlencoded" };
+    const cookie = this.cookieHeader();
+    if (cookie) headers.Cookie = cookie;
     let res: Response;
     try {
       res = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        headers,
         body,
         signal: AbortSignal.timeout(20_000),
       });
@@ -67,6 +89,7 @@ export class MilkyWayClient implements GamePlatformClient {
       const detail = cause?.code || cause?.message || (err instanceof Error ? err.message : "network error");
       throw new JuwaError(-1, `Could not reach the game platform (${detail}). Check the base URL/port and that this server's IP is whitelisted on the game panel.`, true);
     }
+    this.storeCookies(res);
     const raw = await res.text();
     let json: MwEnvelope;
     try {
