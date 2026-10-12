@@ -109,9 +109,16 @@ export class MilkyWayClient implements GamePlatformClient {
   }
 
   // The docs' sign examples all use a 10-digit epoch in SECONDS (despite mentioning millis), so
-  // send seconds for both the `time` param and the signature.
+  // send seconds for both the `time` param and the signature. The platform also treats each `time`
+  // as single-use ("expires after being used successfully once"), and at seconds resolution a login
+  // and the signed call that follows can land in the same second and reuse the value — which the
+  // platform rejects as "Session timeout". So hand out a strictly increasing seconds value.
+  private lastTime = 0;
   private now() {
-    return Math.floor(Date.now() / 1000);
+    let t = Math.floor(Date.now() / 1000);
+    if (t <= this.lastTime) t = this.lastTime + 1;
+    this.lastTime = t;
+    return t;
   }
 
   /** Logs in to obtain the rotating agentKey used to sign later calls. */
