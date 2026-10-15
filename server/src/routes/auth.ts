@@ -9,7 +9,7 @@ import { limitSignupsByIp, recordSuccessfulSignupIp, getClientIp } from "../midd
 import { getPlatformSettings } from "../lib/settings";
 import { sendOtpEmail } from "../lib/email";
 import { sendOtpSms } from "../lib/sms";
-import { telnyxVerifyConfigured, sendSmsVerification, checkSmsVerification, toE164 } from "../lib/telnyx";
+import { telnyxVerifyConfigured, sendSmsVerification, checkSmsVerification, toE164, TelnyxError } from "../lib/telnyx";
 import { issueSession, getSession, clearSession, verifyRefreshToken } from "../lib/tokens";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { checkTwoFactor } from "../lib/twoFactor";
@@ -175,6 +175,9 @@ authRouter.post("/signup/start", limitSignupsByIp, async (req, res) => {
   } catch (err) {
     await redis.del(signupOtpKey(phone));
     console.error("Failed to send signup OTP:", err);
+    if (err instanceof TelnyxError && err.invalidNumber) {
+      return res.status(400).json({ error: "Enter a valid phone number including your country code." });
+    }
     res.status(502).json({ error: "Could not send the verification code. Please try again." });
   }
 });

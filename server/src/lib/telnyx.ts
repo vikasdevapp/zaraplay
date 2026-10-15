@@ -46,10 +46,28 @@ async function call(path: string, body: Record<string, unknown>) {
   return { ok: res.ok, status: res.status, json: json as { data?: { response_code?: string } } | null, text };
 }
 
-/** Sends a fresh OTP over SMS to an E.164 number. Throws if Telnyx rejects the request. */
+export class TelnyxError extends Error {
+  constructor(
+    message: string,
+    public invalidNumber: boolean
+  ) {
+    super(message);
+  }
+}
+
+/** Sends a fresh OTP over SMS to an E.164 number. Throws TelnyxError if Telnyx rejects the request. */
 export async function sendSmsVerification(phoneE164: string): Promise<void> {
   const { ok, status, text } = await call("/verifications/sms", { phone_number: phoneE164 });
-  if (!ok) throw new Error(`Telnyx send failed (${status}): ${text.slice(0, 200)}`);
+  if (!ok) {
+    let detail = "";
+    try {
+      const e = (JSON.parse(text) as { errors?: { title?: string; detail?: string }[] }).errors?.[0];
+      detail = e?.detail || e?.title || "";
+    } catch {
+      /* keep raw */
+    }
+    throw new TelnyxError(`Telnyx send failed (${status}): ${detail || text.slice(0, 150)}`, status === 400 && /invalid/i.test(detail));
+  }
 }
 
 /** Checks the code the user entered. Returns true only when Telnyx accepts it. */

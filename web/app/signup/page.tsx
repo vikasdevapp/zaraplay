@@ -20,6 +20,7 @@ const COUNTRIES = [
   { name: "Nigeria", code: "+234", flag: "🇳🇬" },
   { name: "South Africa", code: "+27", flag: "🇿🇦" },
   { name: "Pakistan", code: "+92", flag: "🇵🇰" },
+  { name: "Nepal", code: "+977", flag: "🇳🇵" },
   { name: "Bangladesh", code: "+880", flag: "🇧🇩" },
   { name: "Germany", code: "+49", flag: "🇩🇪" },
   { name: "France", code: "+33", flag: "🇫🇷" },
@@ -113,9 +114,10 @@ function SignupForm() {
               pattern="[a-zA-Z0-9_]{4,24}"
               title="4-24 letters, numbers or underscores"
             />
-            <div className="flex gap-2">
+            <div style={{ display: "flex", gap: "0.5rem" }}>
               <select
-                className="input w-28 shrink-0"
+                className="input"
+                style={{ flex: "0 0 6.5rem", width: "6.5rem" }}
                 value={countryIdx}
                 onChange={(e) => setCountryIdx(Number(e.target.value))}
                 aria-label="Country code"
@@ -127,7 +129,8 @@ function SignupForm() {
                 ))}
               </select>
               <input
-                className="input flex-1"
+                className="input"
+                style={{ flex: "1 1 auto", minWidth: 0 }}
                 type="tel"
                 inputMode="numeric"
                 placeholder="Phone number"
