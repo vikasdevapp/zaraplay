@@ -47,7 +47,7 @@ export default function LoginPage() {
         <form onSubmit={handleSubmit} className="space-y-3">
           <input
             className="input"
-            placeholder="Email or username"
+            placeholder="Username, phone or email"
             value={emailOrUsername}
             onChange={(e) => setEmailOrUsername(e.target.value)}
             required

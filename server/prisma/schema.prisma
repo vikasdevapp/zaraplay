@@ -130,9 +130,11 @@ model User {
   id            String   @id @default(cuid())
   fullName      String
   username      String   @unique
-  email         String   @unique
+  // Optional now that signup is phone-first; still unique when present (Postgres allows many NULLs).
+  email         String?  @unique
   passwordHash  String
-  phone         String?
+  // Phone-first signup verifies this before the account is created, so it's unique when set.
+  phone         String?  @unique
   phoneVerified Boolean  @default(false)
   // Set from the unsubscribe link in broadcast emails; OTP and account emails still go out.
   emailOptOut   Boolean  @default(false)

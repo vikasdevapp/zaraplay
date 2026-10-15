@@ -30,8 +30,10 @@ interface AuthContextValue {
   accessToken: string | null;
   loading: boolean;
   login: (emailOrUsername: string, password: string, extra?: LoginExtra) => Promise<void>;
-  /** Creates the account and signs the user in (no email verification). */
-  startSignup: (data: { fullName: string; username: string; email: string; password: string; referralCode?: string }) => Promise<void>;
+  /** Phone-first signup — step 1: validate details and send the OTP (no account yet). */
+  signupStart: (data: { fullName: string; username: string; phone: string; password: string; referralCode?: string }) => Promise<{ phone: string; expiresInSeconds: number; devCode?: string }>;
+  /** Phone-first signup — step 2: verify the OTP, which creates the account and signs the user in. */
+  signupVerify: (phone: string, otp: string) => Promise<void>;
   logout: () => Promise<void>;
   /** Exchanges the refresh token for a new pair. Concurrent callers share one in-flight call. */
   refresh: () => Promise<string | null>;
@@ -146,12 +148,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [persist, router]
   );
 
-  // No email verification: signup creates the account and signs the user in straight away.
-  const startSignup = useCallback(
-    async (data: { fullName: string; username: string; email: string; password: string; referralCode?: string }) => {
-      const res = await apiFetch<AuthPayload>("/api/auth/signup", {
+  // Phone-first signup: step 1 sends the OTP (no account yet); step 2 verifies it, which creates
+  // the account and signs the user in.
+  const signupStart = useCallback(
+    async (data: { fullName: string; username: string; phone: string; password: string; referralCode?: string }) => {
+      return apiFetch<{ phone: string; expiresInSeconds: number; devCode?: string }>("/api/auth/signup/start", {
         method: "POST",
         body: JSON.stringify(data),
+      });
+    },
+    []
+  );
+
+  const signupVerify = useCallback(
+    async (phone: string, otp: string) => {
+      const res = await apiFetch<AuthPayload>("/api/auth/signup/verify", {
+        method: "POST",
+        body: JSON.stringify({ phone, otp }),
       });
       persist(res);
       router.push(destinationFor(res.user.role));
@@ -216,7 +229,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         accessToken,
         loading,
         login,
-        startSignup,
+        signupStart,
+        signupVerify,
         logout,
         refresh,
         ready: readyGate.promise,

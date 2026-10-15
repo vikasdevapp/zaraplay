@@ -19,6 +19,14 @@ export function telnyxVerifyConfigured(): boolean {
   return !!cfg();
 }
 
+/** Normalizes a number to E.164 (+<country><number>); a bare 10-digit number defaults to US (+1). */
+export function toE164(raw: string): string {
+  const cleaned = raw.replace(/[\s()-]/g, "");
+  if (cleaned.startsWith("+")) return cleaned;
+  const digits = cleaned.replace(/\D/g, "");
+  return digits.length === 10 ? `+1${digits}` : `+${digits}`;
+}
+
 async function call(path: string, body: Record<string, unknown>) {
   const c = cfg();
   if (!c) throw new Error("Telnyx Verify is not configured (TELNYX_API_KEY / TELNYX_VERIFY_PROFILE_ID).");

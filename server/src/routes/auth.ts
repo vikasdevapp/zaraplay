@@ -9,6 +9,7 @@ import { limitSignupsByIp, recordSuccessfulSignupIp, getClientIp } from "../midd
 import { getPlatformSettings } from "../lib/settings";
 import { sendOtpEmail } from "../lib/email";
 import { sendOtpSms } from "../lib/sms";
+import { telnyxVerifyConfigured, sendSmsVerification, checkSmsVerification, toE164 } from "../lib/telnyx";
 import { issueSession, getSession, clearSession, verifyRefreshToken } from "../lib/tokens";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { checkTwoFactor } from "../lib/twoFactor";
@@ -99,6 +100,150 @@ authRouter.post("/signup", limitSignupsByIp, async (req, res) => {
   });
 });
 
+// --------------------------------------------------------------------------------------------
+// Phone-first signup: the account is only created after the phone OTP is verified.
+// --------------------------------------------------------------------------------------------
+
+const SIGNUP_OTP_TTL = 10 * 60;
+const signupOtpKey = (phone: string) => `signup:otp:${phone}`;
+
+interface PendingSignup {
+  fullName: string;
+  username: string;
+  phone: string;
+  passwordHash: string;
+  referredById?: string;
+  ip: string;
+  // null => the code is managed by Telnyx Verify; a string => the dev-fallback code.
+  otp: string | null;
+  attempts: number;
+}
+
+const signupStartSchema = z.object({
+  fullName: z.string().min(1).max(80),
+  username: z
+    .string()
+    .min(4)
+    .max(24)
+    .regex(/^[a-zA-Z0-9_]+$/, "Username can only contain letters, numbers and underscores."),
+  phone: z.string().min(7).max(20),
+  password: z.string().min(6).max(72),
+  referralCode: z.string().optional(),
+});
+
+// Step 1: validate details, send the OTP, and stash the pending signup (nothing is created yet).
+authRouter.post("/signup/start", limitSignupsByIp, async (req, res) => {
+  const parsed = signupStartSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid input." });
+  const { fullName, username, password, referralCode: incomingRefCode } = parsed.data;
+  const phone = toE164(parsed.data.phone);
+
+  const existing = await prisma.user.findFirst({ where: { OR: [{ username }, { phone }] } });
+  if (existing) {
+    if (existing.phone === phone) return res.status(409).json({ error: "This phone number is already registered." });
+    return res.status(409).json({ error: "That username is already taken." });
+  }
+
+  let referredById: string | undefined;
+  if (incomingRefCode) {
+    const referrer = await prisma.user.findUnique({ where: { referralCode: incomingRefCode } });
+    if (referrer) referredById = referrer.id;
+  }
+
+  const useTelnyx = telnyxVerifyConfigured();
+  const otp = useTelnyx ? null : generateOtp();
+  const pending: PendingSignup = {
+    fullName,
+    username,
+    phone,
+    passwordHash: await bcrypt.hash(password, 10),
+    referredById,
+    ip: getClientIp(req),
+    otp,
+    attempts: 0,
+  };
+  await redis.set(signupOtpKey(phone), JSON.stringify(pending), "EX", SIGNUP_OTP_TTL);
+
+  try {
+    if (useTelnyx) {
+      await sendSmsVerification(phone);
+      res.json({ phone, expiresInSeconds: SIGNUP_OTP_TTL });
+    } else {
+      const sent = await sendOtpSms(phone, otp!);
+      res.json({ phone, expiresInSeconds: SIGNUP_OTP_TTL, devCode: sent.devCode });
+    }
+  } catch (err) {
+    await redis.del(signupOtpKey(phone));
+    console.error("Failed to send signup OTP:", err);
+    res.status(502).json({ error: "Could not send the verification code. Please try again." });
+  }
+});
+
+const signupVerifySchema = z.object({ phone: z.string().min(7).max(20), otp: z.string().length(6) });
+
+// Step 2: verify the OTP and create the account.
+authRouter.post("/signup/verify", async (req, res) => {
+  const parsed = signupVerifySchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid code." });
+  const phone = toE164(parsed.data.phone);
+
+  const key = signupOtpKey(phone);
+  const raw = await redis.get(key);
+  if (!raw) return res.status(400).json({ error: "This code has expired. Please start again." });
+  const pending = JSON.parse(raw) as PendingSignup;
+
+  if (pending.attempts >= MAX_OTP_ATTEMPTS) {
+    await redis.del(key);
+    return res.status(429).json({ error: "Too many incorrect attempts. Please start again." });
+  }
+
+  const accepted =
+    pending.otp === null ? await checkSmsVerification(phone, parsed.data.otp).catch(() => false) : pending.otp === parsed.data.otp;
+  if (!accepted) {
+    pending.attempts += 1;
+    const ttl = await redis.ttl(key);
+    await redis.set(key, JSON.stringify(pending), "EX", ttl > 0 ? ttl : SIGNUP_OTP_TTL);
+    return res.status(400).json({ error: `Incorrect code. ${MAX_OTP_ATTEMPTS - pending.attempts} attempt(s) left.` });
+  }
+  await redis.del(key);
+
+  const settings = await getPlatformSettings();
+  const signupBonus = Number(settings.freeplaySignupGrant);
+
+  let user;
+  try {
+    user = await prisma.user.create({
+      data: {
+        fullName: pending.fullName,
+        username: pending.username,
+        phone: pending.phone,
+        phoneVerified: true,
+        passwordHash: pending.passwordHash,
+        signupIp: pending.ip,
+        referralCode: referralCode(),
+        referredById: pending.referredById,
+        wallet: { create: { balance: signupBonus } },
+        transactions: { create: { type: "SIGNUP_BONUS", amount: signupBonus, status: "COMPLETED", adminNote: "Signup bonus" } },
+      },
+      include: { wallet: true },
+    });
+  } catch (err) {
+    if ((err as { code?: string }).code === "P2002") {
+      return res.status(409).json({ error: "An account with that username or phone already exists." });
+    }
+    throw err;
+  }
+
+  await recordSuccessfulSignupIp(pending.ip);
+  const { accessToken, refreshToken } = await issueSession(user.id, user.role);
+  res.status(201).json({
+    accessToken,
+    refreshToken,
+    user: { id: user.id, fullName: user.fullName, username: user.username, email: user.email, role: user.role },
+    wallet: user.wallet,
+  });
+});
+
 const loginSchema = z.object({
   emailOrUsername: z.string().min(1),
   password: z.string().min(1),
@@ -117,8 +262,9 @@ authRouter.post("/login", async (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: "Invalid input." });
 
   const { emailOrUsername, password, loginAs, totp } = parsed.data;
+  // Phone-first accounts log in with their username or phone (any format); email still works too.
   const user = await prisma.user.findFirst({
-    where: { OR: [{ email: emailOrUsername }, { username: emailOrUsername }] },
+    where: { OR: [{ email: emailOrUsername }, { username: emailOrUsername }, { phone: emailOrUsername }, { phone: toE164(emailOrUsername) }] },
   });
   if (!user) return res.status(401).json({ error: "Invalid credentials." });
 
@@ -226,8 +372,8 @@ authRouter.post("/forgot-password", async (req, res) => {
 
   let devOtpPreview: string | undefined;
 
-  // Send via email or phone
-  if (identifier.includes("@") || user.email === identifier) {
+  // Send via email when the account has one and the identifier is the email; otherwise SMS.
+  if (user.email && (identifier.includes("@") || user.email === identifier)) {
     try {
       await sendOtpEmail(user.email, otp);
     } catch (err) {

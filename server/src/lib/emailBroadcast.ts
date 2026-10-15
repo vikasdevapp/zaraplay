@@ -13,7 +13,8 @@ function escapeHtml(s: string) {
 
 export function emailBroadcastRecipients() {
   return prisma.user.findMany({
-    where: { role: "USER", emailOptOut: false },
+    // Phone-first accounts have no email, so only those with one can receive a broadcast.
+    where: { role: "USER", emailOptOut: false, email: { not: null } },
     select: { id: true, email: true, fullName: true },
     orderBy: { createdAt: "asc" },
   });
@@ -36,6 +37,7 @@ export async function runEmailBroadcast(broadcastId: string, subject: string, bo
   for (let i = 0; i < recipients.length; i++) {
     const started = Date.now();
     const r = recipients[i];
+    if (!r.email) continue; // no email on phone-first accounts
     const unsubscribeUrl = `${baseUrl}/api/email/unsubscribe?token=${encodeURIComponent(unsubscribeToken(r.id))}`;
     try {
       await sendEmail({
