@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { redis, phoneOtpKey } from "../lib/redis";
 import { sendOtpSms } from "../lib/sms";
+import { telnyxVerifyConfigured, sendSmsVerification, checkSmsVerification } from "../lib/telnyx";
 import { getPlatformSettings } from "../lib/settings";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 
@@ -15,7 +16,8 @@ const MAX_ATTEMPTS = 5;
 
 interface PendingPhoneOtp {
   phone: string;
-  otp: string;
+  // null => the code is managed by Telnyx Verify (we never see it); a string => the dev fallback code.
+  otp: string | null;
   attempts: number;
 }
 
@@ -23,25 +25,40 @@ function generateOtp() {
   return crypto.randomInt(100000, 1000000).toString();
 }
 
+// Telnyx needs E.164 (+<country><number>). Strip formatting; default a bare 10-digit number to US.
+function toE164(raw: string): string {
+  const cleaned = raw.replace(/[\s()-]/g, "");
+  if (cleaned.startsWith("+")) return cleaned;
+  const digits = cleaned.replace(/\D/g, "");
+  return digits.length === 10 ? `+1${digits}` : `+${digits}`;
+}
+
 const startSchema = z.object({ phone: z.string().min(7).max(20) });
 
 phoneRouter.post("/start", async (req: AuthedRequest, res) => {
   const parsed = startSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Enter a valid phone number." });
-  const { phone } = parsed.data;
+  const phone = toE164(parsed.data.phone);
 
   const existing = await prisma.user.findFirst({ where: { phone, phoneVerified: true, id: { not: req.userId! } } });
   if (existing) return res.status(409).json({ error: "This phone number is already verified on another account." });
 
-  const otp = generateOtp();
+  const useTelnyx = telnyxVerifyConfigured();
+  // Telnyx generates and sends its own code; the dev fallback generates one we log to the console.
+  const otp = useTelnyx ? null : generateOtp();
   const pending: PendingPhoneOtp = { phone, otp, attempts: 0 };
   await redis.set(phoneOtpKey(req.userId!), JSON.stringify(pending), "EX", OTP_TTL_SECONDS);
 
   try {
-    const sent = await sendOtpSms(phone, otp);
-    res.json({ expiresInSeconds: OTP_TTL_SECONDS, devCode: sent.devCode });
+    if (useTelnyx) {
+      await sendSmsVerification(phone);
+      res.json({ expiresInSeconds: OTP_TTL_SECONDS });
+    } else {
+      const sent = await sendOtpSms(phone, otp!);
+      res.json({ expiresInSeconds: OTP_TTL_SECONDS, devCode: sent.devCode });
+    }
   } catch (err) {
-    console.error("Failed to send OTP SMS:", err);
+    console.error("Failed to send OTP:", err);
     res.status(502).json({ error: "Could not send verification code. Please try again." });
   }
 });
@@ -63,7 +80,11 @@ phoneRouter.post("/verify", async (req: AuthedRequest, res) => {
     return res.status(429).json({ error: "Too many incorrect attempts. Please request a new code." });
   }
 
-  if (pending.otp !== parsed.data.otp) {
+  // Telnyx-managed codes (otp === null) are checked by Telnyx; the dev fallback compares locally.
+  const accepted =
+    pending.otp === null ? await checkSmsVerification(pending.phone, parsed.data.otp).catch(() => false) : pending.otp === parsed.data.otp;
+
+  if (!accepted) {
     pending.attempts += 1;
     const ttl = await redis.ttl(key);
     await redis.set(key, JSON.stringify(pending), "EX", ttl > 0 ? ttl : OTP_TTL_SECONDS);
