@@ -7,27 +7,6 @@ import { useAuth } from "@/context/AuthContext";
 import { ApiError } from "@/lib/api";
 import Logo from "@/components/Logo";
 
-// Common dialing codes shown in the signup country picker (name keeps keys unique).
-const COUNTRIES = [
-  { name: "United States", code: "+1", flag: "🇺🇸" },
-  { name: "Canada", code: "+1", flag: "🇨🇦" },
-  { name: "United Kingdom", code: "+44", flag: "🇬🇧" },
-  { name: "India", code: "+91", flag: "🇮🇳" },
-  { name: "Australia", code: "+61", flag: "🇦🇺" },
-  { name: "Philippines", code: "+63", flag: "🇵🇭" },
-  { name: "Mexico", code: "+52", flag: "🇲🇽" },
-  { name: "Brazil", code: "+55", flag: "🇧🇷" },
-  { name: "Nigeria", code: "+234", flag: "🇳🇬" },
-  { name: "South Africa", code: "+27", flag: "🇿🇦" },
-  { name: "Pakistan", code: "+92", flag: "🇵🇰" },
-  { name: "Nepal", code: "+977", flag: "🇳🇵" },
-  { name: "Bangladesh", code: "+880", flag: "🇧🇩" },
-  { name: "Germany", code: "+49", flag: "🇩🇪" },
-  { name: "France", code: "+33", flag: "🇫🇷" },
-  { name: "Spain", code: "+34", flag: "🇪🇸" },
-  { name: "United Arab Emirates", code: "+971", flag: "🇦🇪" },
-];
-
 function SignupForm() {
   const { signupStart, signupVerify } = useAuth();
   const searchParams = useSearchParams();
@@ -36,24 +15,21 @@ function SignupForm() {
   const [step, setStep] = useState<"details" | "otp">("details");
   const [fullName, setFullName] = useState("");
   const [username, setUsername] = useState("");
-  const [countryIdx, setCountryIdx] = useState(0);
-  const [phoneNumber, setPhoneNumber] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [otp, setOtp] = useState("");
-  const [sentPhone, setSentPhone] = useState("");
+  const [sentEmail, setSentEmail] = useState("");
   const [devCode, setDevCode] = useState<string | undefined>();
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-
-  const fullPhone = `${COUNTRIES[countryIdx].code}${phoneNumber.replace(/\D/g, "")}`;
 
   async function handleDetailsSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
     setSubmitting(true);
     try {
-      const res = await signupStart({ fullName, username, phone: fullPhone, password, referralCode });
-      setSentPhone(res.phone);
+      const res = await signupStart({ fullName, username, email, password, referralCode });
+      setSentEmail(res.email);
       setDevCode(res.devCode);
       setStep("otp");
     } catch (err) {
@@ -68,7 +44,7 @@ function SignupForm() {
     setError(null);
     setSubmitting(true);
     try {
-      await signupVerify(sentPhone, otp);
+      await signupVerify(sentEmail, otp);
       // signupVerify creates the account, signs the user in and redirects on success.
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Verification failed.");
@@ -79,8 +55,8 @@ function SignupForm() {
   async function resend() {
     setError(null);
     try {
-      const res = await signupStart({ fullName, username, phone: fullPhone, password, referralCode });
-      setSentPhone(res.phone);
+      const res = await signupStart({ fullName, username, email, password, referralCode });
+      setSentEmail(res.email);
       setDevCode(res.devCode);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not resend the code.");
@@ -114,31 +90,7 @@ function SignupForm() {
               pattern="[a-zA-Z0-9_]{4,24}"
               title="4-24 letters, numbers or underscores"
             />
-            <div style={{ display: "flex", gap: "0.5rem" }}>
-              <select
-                className="input"
-                style={{ flex: "0 0 6.5rem", width: "6.5rem" }}
-                value={countryIdx}
-                onChange={(e) => setCountryIdx(Number(e.target.value))}
-                aria-label="Country code"
-              >
-                {COUNTRIES.map((c, i) => (
-                  <option key={c.name} value={i}>
-                    {c.flag} {c.code}
-                  </option>
-                ))}
-              </select>
-              <input
-                className="input"
-                style={{ flex: "1 1 auto", minWidth: 0 }}
-                type="tel"
-                inputMode="numeric"
-                placeholder="Phone number"
-                value={phoneNumber}
-                onChange={(e) => setPhoneNumber(e.target.value.replace(/[^\d\s()-]/g, ""))}
-                required
-              />
-            </div>
+            <input className="input" type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required />
             <input
               className="input"
               type="password"
@@ -156,7 +108,7 @@ function SignupForm() {
         ) : (
           <form onSubmit={handleOtpSubmit} className="space-y-3">
             <p className="text-sm text-muted text-center">
-              Enter the 6-digit code we sent to <span className="text-white font-medium">{sentPhone}</span>.
+              Enter the 6-digit code we emailed to <span className="text-white font-medium">{sentEmail}</span>.
             </p>
             {devCode && <p className="text-xs text-center text-yellow-400">Dev code: {devCode}</p>}
             <input

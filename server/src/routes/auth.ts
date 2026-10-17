@@ -7,9 +7,9 @@ import { prisma } from "../lib/prisma";
 import { redis } from "../lib/redis";
 import { limitSignupsByIp, recordSuccessfulSignupIp, getClientIp } from "../middleware/ipLimit";
 import { getPlatformSettings } from "../lib/settings";
-import { sendOtpEmail } from "../lib/email";
+import { sendOtpEmail, isEmailConfigured } from "../lib/email";
 import { sendOtpSms } from "../lib/sms";
-import { telnyxVerifyConfigured, sendSmsVerification, checkSmsVerification, toE164, TelnyxError } from "../lib/telnyx";
+import { toE164 } from "../lib/telnyx";
 import { issueSession, getSession, clearSession, verifyRefreshToken } from "../lib/tokens";
 import { requireAuth, AuthedRequest } from "../middleware/auth";
 import { checkTwoFactor } from "../lib/twoFactor";
@@ -101,21 +101,21 @@ authRouter.post("/signup", limitSignupsByIp, async (req, res) => {
 });
 
 // --------------------------------------------------------------------------------------------
-// Phone-first signup: the account is only created after the phone OTP is verified.
+// Email-first signup: the account is only created after the email OTP is verified. (Phone is
+// verified later, in-app, for a bonus.)
 // --------------------------------------------------------------------------------------------
 
 const SIGNUP_OTP_TTL = 10 * 60;
-const signupOtpKey = (phone: string) => `signup:otp:${phone}`;
+const signupOtpKey = (email: string) => `signup:otp:${email.toLowerCase()}`;
 
 interface PendingSignup {
   fullName: string;
   username: string;
-  phone: string;
+  email: string;
   passwordHash: string;
   referredById?: string;
   ip: string;
-  // null => the code is managed by Telnyx Verify; a string => the dev-fallback code.
-  otp: string | null;
+  otp: string;
   attempts: number;
 }
 
@@ -126,21 +126,21 @@ const signupStartSchema = z.object({
     .min(4)
     .max(24)
     .regex(/^[a-zA-Z0-9_]+$/, "Username can only contain letters, numbers and underscores."),
-  phone: z.string().min(7).max(20),
+  email: z.string().email(),
   password: z.string().min(6).max(72),
   referralCode: z.string().optional(),
 });
 
-// Step 1: validate details, send the OTP, and stash the pending signup (nothing is created yet).
+// Step 1: validate details, email the OTP, and stash the pending signup (nothing is created yet).
 authRouter.post("/signup/start", limitSignupsByIp, async (req, res) => {
   const parsed = signupStartSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid input." });
   const { fullName, username, password, referralCode: incomingRefCode } = parsed.data;
-  const phone = toE164(parsed.data.phone);
+  const email = parsed.data.email.trim().toLowerCase();
 
-  const existing = await prisma.user.findFirst({ where: { OR: [{ username }, { phone }] } });
+  const existing = await prisma.user.findFirst({ where: { OR: [{ username }, { email }] } });
   if (existing) {
-    if (existing.phone === phone) return res.status(409).json({ error: "This phone number is already registered." });
+    if (existing.email === email) return res.status(409).json({ error: "An account with that email already exists." });
     return res.status(409).json({ error: "That username is already taken." });
   }
 
@@ -150,47 +150,39 @@ authRouter.post("/signup/start", limitSignupsByIp, async (req, res) => {
     if (referrer) referredById = referrer.id;
   }
 
-  const useTelnyx = telnyxVerifyConfigured();
-  const otp = useTelnyx ? null : generateOtp();
+  const otp = generateOtp();
   const pending: PendingSignup = {
     fullName,
     username,
-    phone,
+    email,
     passwordHash: await bcrypt.hash(password, 10),
     referredById,
     ip: getClientIp(req),
     otp,
     attempts: 0,
   };
-  await redis.set(signupOtpKey(phone), JSON.stringify(pending), "EX", SIGNUP_OTP_TTL);
+  await redis.set(signupOtpKey(email), JSON.stringify(pending), "EX", SIGNUP_OTP_TTL);
 
   try {
-    if (useTelnyx) {
-      await sendSmsVerification(phone);
-      res.json({ phone, expiresInSeconds: SIGNUP_OTP_TTL });
-    } else {
-      const sent = await sendOtpSms(phone, otp!);
-      res.json({ phone, expiresInSeconds: SIGNUP_OTP_TTL, devCode: sent.devCode });
-    }
+    await sendOtpEmail(email, otp);
+    // In dev (no SMTP configured) nothing reaches a real inbox, so hand the code back for testing.
+    res.json({ email, expiresInSeconds: SIGNUP_OTP_TTL, ...(isEmailConfigured() ? {} : { devCode: otp }) });
   } catch (err) {
-    await redis.del(signupOtpKey(phone));
-    console.error("Failed to send signup OTP:", err);
-    if (err instanceof TelnyxError && err.invalidNumber) {
-      return res.status(400).json({ error: "Enter a valid phone number including your country code." });
-    }
-    res.status(502).json({ error: "Could not send the verification code. Please try again." });
+    await redis.del(signupOtpKey(email));
+    console.error("Failed to send signup OTP email:", err);
+    res.status(502).json({ error: "Could not send the verification email. Please check the address and try again." });
   }
 });
 
-const signupVerifySchema = z.object({ phone: z.string().min(7).max(20), otp: z.string().length(6) });
+const signupVerifySchema = z.object({ email: z.string().email(), otp: z.string().length(6) });
 
 // Step 2: verify the OTP and create the account.
 authRouter.post("/signup/verify", async (req, res) => {
   const parsed = signupVerifySchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid code." });
-  const phone = toE164(parsed.data.phone);
+  const email = parsed.data.email.trim().toLowerCase();
 
-  const key = signupOtpKey(phone);
+  const key = signupOtpKey(email);
   const raw = await redis.get(key);
   if (!raw) return res.status(400).json({ error: "This code has expired. Please start again." });
   const pending = JSON.parse(raw) as PendingSignup;
@@ -200,9 +192,7 @@ authRouter.post("/signup/verify", async (req, res) => {
     return res.status(429).json({ error: "Too many incorrect attempts. Please start again." });
   }
 
-  const accepted =
-    pending.otp === null ? await checkSmsVerification(phone, parsed.data.otp).catch(() => false) : pending.otp === parsed.data.otp;
-  if (!accepted) {
+  if (pending.otp !== parsed.data.otp) {
     pending.attempts += 1;
     const ttl = await redis.ttl(key);
     await redis.set(key, JSON.stringify(pending), "EX", ttl > 0 ? ttl : SIGNUP_OTP_TTL);
@@ -219,12 +209,12 @@ authRouter.post("/signup/verify", async (req, res) => {
       data: {
         fullName: pending.fullName,
         username: pending.username,
-        phone: pending.phone,
-        phoneVerified: true,
+        email: pending.email,
         passwordHash: pending.passwordHash,
         signupIp: pending.ip,
         referralCode: referralCode(),
         referredById: pending.referredById,
+        phoneVerified: false,
         wallet: { create: { balance: signupBonus } },
         transactions: { create: { type: "SIGNUP_BONUS", amount: signupBonus, status: "COMPLETED", adminNote: "Signup bonus" } },
       },
@@ -232,7 +222,7 @@ authRouter.post("/signup/verify", async (req, res) => {
     });
   } catch (err) {
     if ((err as { code?: string }).code === "P2002") {
-      return res.status(409).json({ error: "An account with that username or phone already exists." });
+      return res.status(409).json({ error: "An account with that username or email already exists." });
     }
     throw err;
   }
